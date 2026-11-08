@@ -1,0 +1,26 @@
+[Unit]
+Description=Personal Infrastructure Watcher (dashboard + collector)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/pi-watcher/current
+Environment=PYTHONPATH=%h/pi-watcher/current/vendor:%h/pi-watcher/current/backend
+Environment=WATCHER_HOME=%h/pi-watcher
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m uvicorn watcher.main:create_app --factory --host 127.0.0.1 --port 8200 --workers 1 --no-access-log --no-server-header --log-level warning
+Restart=always
+RestartSec=5
+# Be a good neighbour on a small server: low priority and hard ceilings.
+Nice=10
+MemoryMax=300M
+CPUQuota=60%
+TasksMax=100
+NoNewPrivileges=true
+UMask=0077
+# Bounded logs: warnings only, and a rate limit on the journal.
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Start/stop control for the Mac monitoring agent.
+set -uo pipefail
+
+APP="$HOME/.local/share/infra-watcher"
+STATE="$HOME/.local/state/infra-watcher"
+PIDFILE="$STATE/agent.pid"
+LABEL="com.astra-watch.agent"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+PY="${WATCHER_PYTHON:-/usr/bin/python3}"
+mkdir -p "$STATE"
+
+running_pid() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null && cat "$PIDFILE"; }
+launchd_loaded() { launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; }
+
+case "${1:-}" in
+  start)
+    if launchd_loaded; then echo "Running under launchd (use 'watcher-agent disable' to stop auto-start)."; exit 0; fi
+    if p=$(running_pid); then echo "Already running (pid $p)."; exit 0; fi
+    nohup "$PY" "$APP/mac_agent.py" >>"$STATE/stdout.log" 2>&1 &
+    echo $! >"$PIDFILE"; sleep 1
+    running_pid >/dev/null && echo "Started (pid $(cat "$PIDFILE"))." || { echo "Failed to start; see $STATE/agent.log"; exit 1; }
+    ;;
+  stop)
+    if launchd_loaded; then launchctl kill SIGTERM "gui/$(id -u)/$LABEL"; echo "Stop signal sent (launchd will restart it at next login unless you run 'disable')."; exit 0; fi
+    if p=$(running_pid); then kill -TERM "$p"; for _ in 1 2 3 4 5 6 7 8; do sleep 0.5; kill -0 "$p" 2>/dev/null || break; done
+      rm -f "$PIDFILE"; echo "Stopped."
+    else echo "Not running."; fi
+    ;;
+  status)
+    if launchd_loaded; then echo "Running under launchd (auto-start enabled)."
+    elif p=$(running_pid); then echo "Running (pid $p)."; else echo "Not running."; fi
+    [ -f "$PLIST" ] && echo "Auto-start at login: enabled" || echo "Auto-start at login: disabled"
+    tail -n 3 "$STATE/agent.log" 2>/dev/null
+    ;;
+  logs) tail -n 50 -f "$STATE/agent.log" ;;
+  enable)
+    cat >"$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key><array><string>$PY</string><string>$APP/mac_agent.py</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$STATE/stdout.log</string>
+  <key>StandardErrorPath</key><string>$STATE/stdout.log</string>
+</dict></plist>
+EOF
+    "$0" stop >/dev/null 2>&1
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" && echo "Enabled: the agent now starts at login and restarts if it crashes."
+    ;;
+  disable)
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null; rm -f "$PLIST"; echo "Auto-start disabled and agent stopped."
+    ;;
+  once) exec "$PY" "$APP/mac_agent.py" --once ;;
+  uninstall)
+    "$0" disable >/dev/null 2>&1; "$0" stop >/dev/null 2>&1
+    security delete-generic-password -s infra-watcher-agent >/dev/null 2>&1
+    rm -rf "$APP" "$HOME/.config/infra-watcher" "$HOME/.local/bin/watcher-agent"
+    echo "Agent, config and Keychain token removed. Logs remain in $STATE."
+    ;;
+  *) echo "usage: watcher-agent {start|stop|status|logs|enable|disable|once|uninstall}"; exit 1 ;;
+esac
