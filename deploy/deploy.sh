@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run from your Mac:  deploy/deploy.sh   -> builds, uploads, activates (auto-rollback on failed health check).
-# Touches ONLY ~/pi-watcher and the two infra-*.service user units on the server.
+# Touches ONLY ~/pi-watcher and the infra-watcher user unit on the server.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Target server comes from the environment or an untracked deploy/local.env (see deploy/local.env.example).
@@ -17,9 +17,9 @@ echo "==> backend";  cp -R "$ROOT/backend/watcher" "$STAGE/backend/" && find "$S
 echo "==> vendored dependencies (Linux x86_64, CPython 3.12)"
 W="$(mktemp -d)"; "$ROOT/.venv/bin/pip" download -q --only-binary=:all: --python-version 3.12 --implementation cp \
   --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 --platform manylinux_2_28_x86_64 \
-  --abi cp312 --abi abi3 --abi none fastapi uvicorn cryptography -d "$W" 2>/dev/null
+  --abi cp312 --abi abi3 --abi none fastapi uvicorn -d "$W" 2>/dev/null
 for f in "$W"/*.whl; do unzip -q -o "$f" -d "$STAGE/vendor"; done
-cp "$ROOT"/deploy/{infra-watcher.service,infra-cloudflared.service,remote_install.sh} "$STAGE/deploy/"
+cp "$ROOT"/deploy/{infra-watcher.service,remote_install.sh} "$STAGE/deploy/"
 echo "==> upload ($(du -sh "$STAGE" | cut -f1))"
 "${SSH[@]}" "$HOST" "mkdir -p ~/pi-watcher/releases"
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$STAGE" -cf - . | "${SSH[@]}" "$HOST" "mkdir -p ~/pi-watcher/releases/$STAMP && tar -C ~/pi-watcher/releases/$STAMP -xf -"

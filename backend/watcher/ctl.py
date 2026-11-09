@@ -8,7 +8,7 @@
     python -m watcher.ctl pair-agent [name]     # prints a one-time Mac agent token
     python -m watcher.ctl revoke-agent <id>
     python -m watcher.ctl rotate-agent <id>     # revoke + pair a replacement
-    python -m watcher.ctl cf-access             # Cloudflare Access team domain + AUD (+ owner email)
+    python -m watcher.ctl tailscale-owner <email>   # allow only this tailnet login via `tailscale serve`
     python -m watcher.ctl backup
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ def cmd_status(paths: Paths, _args):
     tg = Telegram(sec)
     print("Telegram configured :", tg.configured(), "| mode:", s.get("TELEGRAM_MODE", "webhook"))
     print("Webhook secret set  :", bool(s.get("TELEGRAM_WEBHOOK_SECRET")))
-    print("Cloudflare Access   :", bool(s.get("CF_ACCESS_TEAM_DOMAIN") and s.get("CF_ACCESS_AUD")))
+    print("Tailscale owner set :", bool(s.get("TAILSCALE_OWNER_LOGIN")))
     for a in AgentRegistry(paths).list():
         print(f"Agent {a['id']} ({a['name']}) revoked={a['revoked']}")
     if tg.configured():
@@ -103,6 +103,13 @@ def cmd_use_polling(paths: Paths, _args):
     print("Webhook removed; the watcher now polls Telegram (works without a public endpoint).")
 
 
+def cmd_tailscale_owner(paths: Paths, args):
+    if not args or "@" not in args[0]:
+        sys.exit("usage: tailscale-owner <tailnet login email>")
+    _set(paths, TAILSCALE_OWNER_LOGIN=args[0].strip().lower())
+    print("Dashboard access via Tailscale Serve is now limited to", args[0].strip().lower())
+
+
 def cmd_test_telegram(paths: Paths, _args):
     Telegram(Secrets(paths)).send("<b>PERSONAL INFRASTRUCTURE WATCHER</b>\n\n✅ Test notification from watcherctl.")
     print("Sent.")
@@ -124,14 +131,6 @@ def cmd_rotate_agent(paths: Paths, args):
     cmd_pair_agent(paths, [])
 
 
-def cmd_cf_access(paths: Paths, _args):
-    team = input("Cloudflare Zero Trust team name (the part before .cloudflareaccess.com): ").strip()
-    aud = input("Access application AUD tag: ").strip()
-    email = input("Owner email allowed (optional): ").strip()
-    _set(paths, CF_ACCESS_TEAM_DOMAIN=team, CF_ACCESS_AUD=aud, OWNER_EMAIL=email or None)
-    print("Saved. The dashboard API now requires a valid Cloudflare Access token.")
-
-
 def cmd_backup(paths: Paths, _args):
     from .config import Paths as P
     from .db import DB
@@ -142,14 +141,14 @@ def cmd_backup(paths: Paths, _args):
     DB(paths.db).checkpoint_backup(d / f"watcher-{stamp}.sqlite3")
     shutil.copytree(paths.config, d / f"config-{stamp}")
     for p in d.glob("watcher-*.sqlite3"):
-        if time.time() - p.stat().st_mtime > 72 * 3600:
+        if time.time() - p.stat().st_mtime > 24 * 3600:
             p.unlink()
     print("Backup written to", d)
 
 
 COMMANDS = {"status": cmd_status, "setup-telegram": cmd_setup_telegram, "set-webhook": cmd_set_webhook,
             "use-polling": cmd_use_polling, "test-telegram": cmd_test_telegram, "pair-agent": cmd_pair_agent,
-            "revoke-agent": cmd_revoke_agent, "rotate-agent": cmd_rotate_agent, "cf-access": cmd_cf_access,
+            "revoke-agent": cmd_revoke_agent, "rotate-agent": cmd_rotate_agent, "tailscale-owner": cmd_tailscale_owner,
             "backup": cmd_backup}
 
 

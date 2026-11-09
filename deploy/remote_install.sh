@@ -14,9 +14,8 @@ exec /usr/bin/python3 -m watcher.ctl "$@"
 W
 chmod 755 "$BASE/bin/watcherctl"
 
-# units (only our own two files are touched)
+# units (only our own unit file is touched)
 install -m 644 "$REL/deploy/infra-watcher.service" "$HOME/.config/systemd/user/infra-watcher.service"
-install -m 644 "$REL/deploy/infra-cloudflared.service" "$HOME/.config/systemd/user/infra-cloudflared.service"
 
 PREV="$(readlink -e "$BASE/current" 2>/dev/null || true)"
 ln -sfn "$REL" "$BASE/current.new" && mv -T "$BASE/current.new" "$BASE/current"

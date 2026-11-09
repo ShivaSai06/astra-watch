@@ -1,7 +1,7 @@
 """Configuration, secrets and settings.
 
 Three separate things live on disk (never in the monitoring database):
-  * secrets.env   (0600)  Telegram token/chat id, webhook secret, Cloudflare Access ids
+  * secrets.env   (0600)  Telegram token/chat id, webhook secret, Tailscale owner login, approval key
   * agents.json   (0600)  SHA-256 hashes of Mac agent tokens (the token itself is shown once)
   * settings.json         Non-secret, owner-editable thresholds and intervals
 """
@@ -14,17 +14,19 @@ import stat
 import threading
 from pathlib import Path
 
-RETENTION_HARD_MAX_HOURS = 72
+RETENTION_HARD_MAX_HOURS = 24
 
 DEFAULT_SETTINGS: dict = {
-    "public_url": "https://monitor.example.com",
-    "refresh_interval": 30,          # seconds between collections (15-300)
+    "public_url": "https://astra.example.ts.net",
+    # Three different clocks (see docs/monitoring.md):
+    "dashboard_refresh_seconds": 30,  # how often the BROWSER re-reads cached data (10-300). Never triggers collection.
+    "refresh_interval": 30,          # BACKEND collection + alert evaluation, and how often the Mac agent reports (15-300)
     "persist_seconds": 180,          # a problem must persist this long before notification (60-600)
     "cpu_persist_seconds": 300,      # sustained CPU window
     "recover_seconds": 120,          # must stay clear this long before "recovered"
     "cooldown_minutes": 30,          # no repeat notification for the same problem within this time
     "recovery_notifications": True,
-    "retention_hours": 72,           # may only be lowered, never above 72
+    "retention_hours": 24,           # may only be lowered, never above 24
     "thresholds": {
         "mem_warn": 85, "mem_crit": 95,
         "cpu_warn": 85, "cpu_crit": 95,
@@ -34,8 +36,8 @@ DEFAULT_SETTINGS: dict = {
         "restart_count": 3,                               # restarts within 15 min
         "container_cpu": 80,                              # percent of one core... of host share
         "container_mem_host_pct": 40,                     # % of host RAM
-        "agent_grace_seconds": 120,                       # shown as disconnected after this
-        "agent_notify_minutes": 15,                       # notify only after this long (sleep tolerant)
+        "agent_grace_seconds": 120,                       # no report for this long -> "Stale"
+        "agent_notify_minutes": 15,                       # no report for this long -> "Offline" + one notification (sleep tolerant)
         "vitest_workers": 4,
         "node_procs": 12,
         "docker_vm_gb": 3.0,
@@ -47,6 +49,7 @@ DEFAULT_SETTINGS: dict = {
 
 # (min, max) bounds for validation of every editable value
 BOUNDS: dict = {
+    "dashboard_refresh_seconds": (10, 300),
     "refresh_interval": (15, 300),
     "persist_seconds": (60, 900),
     "cpu_persist_seconds": (60, 1800),
@@ -206,7 +209,7 @@ class Secrets:
     def all(self) -> dict[str, str]:
         env = load_env_file(self.paths.secrets)
         for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_USER_ID", "TELEGRAM_WEBHOOK_SECRET",
-                  "TELEGRAM_MODE", "CF_ACCESS_TEAM_DOMAIN", "CF_ACCESS_AUD", "OWNER_EMAIL", "APPROVAL_HMAC_KEY"):
+                  "TELEGRAM_MODE", "TAILSCALE_OWNER_LOGIN", "APPROVAL_HMAC_KEY"):
             if k in os.environ and k not in env:
                 env[k] = os.environ[k]
         return env

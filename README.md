@@ -1,134 +1,99 @@
 <div align="center">
 
+<img src="site/assets/logo.svg" width="72" alt="Astra Watch logo">
+
 # Astra Watch
 
-**A small, self-hosted watchtower for your dev Mac and your Linux server — with a human in the loop.**
+**Private infrastructure monitoring for personal devices and servers.**
+
+An open-source personal project: one lightweight dashboard for a MacBook and a Linux server, reachable only over Tailscale.
 
 </div>
 
-![Astra Watch dashboard](docs/images/dashboard.png)
-<sub>Dashboard shown with synthetic demo data.</sub>
+![Astra Watch overview (synthetic demo data)](site/assets/screenshots/overview.png)
+<sub>Real dashboard running on synthetic demo data. No live machines appear in any screenshot.</sub>
 
-## What it is
+## Why I built it
 
-Astra Watch answers three questions at a glance: *Is everything healthy? What is causing a problem? What can I safely stop?*
+Managing multiple development machines and self-hosted services often means switching between terminal commands, Docker tools and different monitoring views just to understand what's happening.
 
-A lightweight collector runs on a Linux server and a tiny agent runs on a Mac. A rule engine turns raw numbers into
-plain-language alerts (cause, impact, recommendation), sends them to Telegram, and lets you stop a runaway container or
-process after an explicit two-step confirmation. Nothing is ever stopped automatically.
+I ran into this with my MacBook and a remote Linux server running several Docker-based workloads. When a machine got slow or a container started using too many resources, I had to check CPU, memory, disk space, running processes and container status separately, and connect to the server by hand to do it.
 
-> **Personal project.** I built this for my own server and laptop and run it in production for myself. It is shared as a
-> portfolio piece and a reference, not as a supported product. Read the code before you trust it with your infrastructure.
+I wanted a simpler way to answer: *Are my machines healthy? What is consuming resources? Which containers need attention? Has a device stopped reporting? Can I check all of this securely while I'm away from my workstation?*
 
-## Features
+That led me to build Astra Watch: a lightweight application that brings system metrics, process visibility, Docker monitoring and alerts into one private dashboard.
 
-- **Two machines, one view** – CPU, memory, swap, disk, load and trends (1 h / 24 h / 72 h) for a Mac and a Linux server.
-- **Explains problems** – alerts include the measured value, likely cause, impact and a suggested action; they must persist before firing, so they don't flap.
-- **Docker aware** – per-container CPU/memory, restart loops, unhealthy or stopped containers, oversized logs, Docker disk usage.
-- **Telegram alerts with Stop buttons** – long-poll or webhook mode; stopping needs a confirmation step.
-- **Mac development workloads** – spots runaway Node/Vitest workers, orphaned processes and Docker Desktop memory.
-- **Quiet and bounded** – history is capped at 72 h, and the service runs with systemd memory/CPU limits.
+It is a personal project that solves a problem I actually had. It is not an enterprise monitoring platform, but other developers and self-hosters are welcome to explore and extend it.
+
+## What it does
+
+- **Two machines, one view.** A Mac (via a small agent) and a Linux server, each marked **Connected**, **Stale** or **Offline** with a last-seen time. Old numbers are never shown as current.
+- **CPU, memory, swap, disk** with 1 h / 24 h trends.
+- **Processes and Docker.** Top processes, per-container CPU, memory, health, restarts and log size.
+- **Alerts with explanations.** A problem must persist before it alerts; incidents show cause, impact and a suggested action.
+- **Telegram notifications**, one per incident, plus a recovery message.
+- **Controlled stop.** A container can be stopped only after an explicit, single-use confirmation.
+- **Private by design.** Tailscale-only access, HTTPS, one authorised identity, Funnel disabled.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     subgraph Mac
-      A[Mac agent<br/>stdlib Python]
+      A[Mac agent<br/>Python, launchd, Keychain]
     end
     subgraph Server["Linux server"]
-      C[Collector + rule engine<br/>FastAPI · SQLite]
-      D[(Docker)]
+      T[Tailscale Serve<br/>HTTPS]
+      C[Backend + rule engine<br/>FastAPI]
+      D[(SQLite, 24 h)]
+      K[(Docker)]
+      T --> C
       C --- D
+      C --- K
     end
-    B[Browser<br/>React dashboard]
-    T[Telegram]
-    CF{{Cloudflare Tunnel<br/>+ Access}}
-
-    A -- "HTTPS, bearer token" --> CF
-    B -- "HTTPS, SSO" --> CF
-    CF -- "outbound-only tunnel" --> C
-    C -- alerts --> T
-    T -- "Stop / Confirm" --> C
+    B[Browser on your tailnet]
+    G[Telegram]
+    A -- "bearer token" --> T
+    B --> T
+    C -- alerts --> G
+    G -- "Stop / Confirm" --> C
 ```
 
-The server binds to `127.0.0.1` only; the public hostname is reachable solely through an outbound Cloudflare Tunnel.
+The Mac agent reports every 30 seconds. The server collects its own metrics independently, stores them in SQLite, evaluates alerts and talks to Telegram. The dashboard reads stored data every 30 seconds and never triggers collection. See [docs/architecture.md](docs/architecture.md).
 
-## Tech stack
+## Technology stack
 
-| Layer | Technology |
+Python 3.12 · FastAPI · Uvicorn · SQLite · Docker CLI · Tailscale · systemd user services · launchd and macOS Keychain · Telegram Bot API · React 18 · TypeScript · Vite · pytest.
+Each choice and the reason for it: [docs/technology-stack.md](docs/technology-stack.md).
+
+## Security and privacy
+
+- The live dashboard is **private**; it is not published anywhere. Remote access is through Tailscale Serve, **Funnel is disabled**.
+- Network access and application login are separate layers: the backend also requires the one authorised Tailscale identity and CSRF tokens for changes.
+- The Mac agent and Telegram have their own credentials.
+- Stop actions are allowlisted and need a two-step confirmation.
+- No secrets, databases or infrastructure details are in this repository.
+
+Full explanation: [docs/security.md](docs/security.md).
+
+## Screenshots
+
+| | |
 |---|---|
-| Backend | Python 3.12, FastAPI, Uvicorn, SQLite |
-| Dashboard | React 18, TypeScript, Vite |
-| Mac agent | Python standard library only, launchd, macOS Keychain |
-| Deployment | systemd user services, release directories with automatic rollback |
-| Edge | Cloudflare Tunnel and Cloudflare Access |
-| Tests | pytest (65 tests: engine, approvals, security, agent) |
+| ![Server](site/assets/screenshots/server.png) | ![Stale Mac](site/assets/screenshots/overview-stale.png) |
+| ![Alerts](site/assets/screenshots/alerts.png) | ![Settings](site/assets/screenshots/settings.png) |
 
-## Security and access
+All generated from synthetic data with [`scripts/demo_server.py`](scripts/demo_server.py).
 
-Three independent trust domains, each with its own credential:
+## Documentation
 
-| Who | How they authenticate |
-|---|---|
-| Dashboard (you) | Cloudflare Access JWT verified by the app itself, plus CSRF tokens on every state change. Fails closed if Access isn't configured. |
-| Mac agent | Per-agent bearer token, stored only as a SHA-256 hash on the server and in the macOS Keychain on the Mac. Revocable and rotatable. |
-| Telegram | Secret webhook header, plus an allow-listed user id and private chat id. |
+- [Architecture](docs/architecture.md) · [Technology stack](docs/technology-stack.md) · [Monitoring and alerting](docs/monitoring.md) · [Security](docs/security.md) · [Setup](docs/SETUP.md)
+- Try it locally on fake data: `python scripts/demo_server.py` (after building `frontend/`).
+- Code map: `backend/` (API, rule engine, tests), `frontend/` (dashboard), `agent/` (Mac agent), `deploy/` (release and rollback scripts), `site/` (public landing page).
 
-Other safeguards:
+## Project status and limitations
 
-- **Stop is a two-step, single-use approval** bound to the exact target by HMAC. The only mutating Docker call is `docker stop` on a validated 64-hex container id; the agent re-verifies process identity and sends SIGTERM, never SIGKILL.
-- **Rate limiting**, request-size limits, strict security headers and a restrictive Content-Security-Policy.
-- **Secrets stay out of the database** and out of the repository (`0600` files; the Telegram token is scrubbed from error messages).
-- **Privacy:** the Mac agent reads process command lines locally to classify workloads, but sends only labels, executable paths and resource numbers.
-
-> Note: the server user is in the `docker` group, which is root-equivalent on that host. Safety therefore comes from the code paths above, so review them for your own setup.
-
-## Getting started
-
-Requirements: a Linux server with Python 3.12 and systemd user services, SSH access, a Telegram bot (from @BotFather) and,
-for remote access, a Cloudflare account. Node and Python 3.12+ on your workstation.
-
-```bash
-# 1. Run the tests and build the dashboard
-python3 -m venv .venv && .venv/bin/pip install -r backend/requirements-dev.txt
-(cd backend && ../.venv/bin/python -m pytest -q)
-(cd frontend && npm ci && npm run build)
-
-# 2. Point the deploy scripts at your server (this file is git-ignored)
-cp deploy/local.env.example deploy/local.env && $EDITOR deploy/local.env
-
-# 3. Build, upload and activate a release (rolls back automatically if the health check fails)
-./deploy/deploy.sh
-```
-
-Then finish the one-time setup on the server (Telegram token, Cloudflare Tunnel and Access) following
-[docs/SETUP.md](docs/SETUP.md), and install the Mac agent:
-
-```bash
-./agent/install.sh            # asks for your dashboard URL and agent token; no sudo
-watcher-agent start           # also: stop | status | logs | enable | disable
-```
-
-### Configuration
-
-| Item | Where |
-|---|---|
-| Thresholds, intervals, retention | Dashboard → Settings (`settings.json`) |
-| Telegram token, Cloudflare Access ids | `~/pi-watcher/config/secrets.env` on the server, written by `watcherctl` |
-| Agent tokens | Created with `watcherctl pair-agent`; only hashes are stored |
-| Deploy target | `deploy/local.env` (`WATCHER_HOST`, `WATCHER_KEY`) |
-| Public URL (links in alerts) | `public_url` in `settings.json`; the default `https://monitor.example.com` is a placeholder |
-
-## Repository layout
-
-```
-backend/    FastAPI app, rule engine, Telegram client, admin CLI (watcherctl), tests
-frontend/   React + TypeScript dashboard
-agent/      Mac agent and launchd helper
-deploy/     Release-based deploy, rollback and systemd units
-docs/       Setup guide
-```
+Working and in daily personal use. Limitations: exactly two machines (one Mac, one Linux server), a single owner, 24 hours of history, and no alerting if the server itself is down. Read the code before trusting it with your own infrastructure.
 
 ## License
 

@@ -1,11 +1,8 @@
 """Authentication, CSRF, rate limiting, API behaviour and Mac agent ingestion."""
-import base64
 import json
 import time
 
 import pytest
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi.testclient import TestClient
 
 from conftest import FakeTG
@@ -14,42 +11,10 @@ from watcher.config import Paths, save_env_file
 from watcher.main import create_app
 
 
-def b64(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
-
-
-def make_jwt(key, claims, kid="k1", alg="RS256"):
-    h = b64(json.dumps({"alg": alg, "kid": kid}).encode()); p = b64(json.dumps(claims).encode())
-    sig = key.sign(f"{h}.{p}".encode(), padding.PKCS1v15(), hashes.SHA256())
-    return f"{h}.{p}.{b64(sig)}"
-
-
-def jwks(key, kid="k1"):
-    n = key.public_key().public_numbers()
-    return {kid: {"kid": kid, "n": b64(n.n.to_bytes(256, "big")), "e": b64(n.e.to_bytes(3, "big"))}}
-
-
-def test_cloudflare_access_jwt_verification():
-    key = rsa.generate_private_key(65537, 2048)
-    cf, now = security.CloudflareAccess(), time.time()
-    good = {"aud": ["AUD1"], "iss": "https://me.cloudflareaccess.com", "exp": now + 600, "email": "owner@x.com"}
-    assert cf.verify(make_jwt(key, good), "me", "AUD1", "owner@x.com", keys=jwks(key))["email"] == "owner@x.com"
-    for bad, why in (({**good, "aud": ["OTHER"]}, "audience"), ({**good, "exp": now - 5}, "expired"),
-                     ({**good, "iss": "https://evil.cloudflareaccess.com"}, "issuer"), ({**good, "email": "eve@x.com"}, "owner")):
-        with pytest.raises(PermissionError):
-            cf.verify(make_jwt(key, bad), "me", "AUD1", "owner@x.com", keys=jwks(key))
-    other = rsa.generate_private_key(65537, 2048)
-    with pytest.raises(PermissionError):                                           # wrong signing key
-        cf.verify(make_jwt(other, good), "me", "AUD1", keys=jwks(key))
-    with pytest.raises(PermissionError):                                           # alg=none / HS256 downgrade
-        cf.verify(make_jwt(key, good, alg="HS256"), "me", "AUD1", keys=jwks(key))
-    with pytest.raises(PermissionError):
-        cf.verify("not.a.jwt", "me", "AUD1", keys=jwks(key))
-
-
 def test_csrf_double_submit_and_origin():
-    assert security.csrf_ok("t", "t", "https://monitor.example.com", "monitor.example.com")
+    assert security.csrf_ok("t", "t", "https://astra.example.ts.net", "astra.example.ts.net")
     assert not security.csrf_ok("t", "x", None, "h") and not security.csrf_ok(None, None, None, "h")
-    assert not security.csrf_ok("t", "t", "https://evil.example", "monitor.example.com")
+    assert not security.csrf_ok("t", "t", "https://evil.example", "astra.example.ts.net")
 
 
 def test_rate_limiter():
@@ -99,16 +64,12 @@ def test_healthz_is_public_and_minimal(client):
     assert r.status_code == 200 and set(r.json()) == {"status", "version"}
 
 
-def test_dashboard_fails_closed_through_proxy_when_access_not_configured(client):
+def test_dashboard_fails_closed_through_proxy_without_tailscale_identity(client):
     assert client.get("/api/overview").status_code == 200                           # direct loopback / SSH tunnel
-    assert client.get("/api/overview", headers={"cf-connecting-ip": "9.9.9.9"}).status_code == 403   # via Cloudflare: refused
+    assert client.get("/api/overview", headers={"cf-connecting-ip": "9.9.9.9"}).status_code == 403
     assert client.get("/api/overview", headers={"x-forwarded-for": "9.9.9.9"}).status_code == 403
-
-
-def test_dashboard_requires_valid_access_token_when_configured(client):
-    save_env_file(client.st.paths.secrets, client.st.secrets.all() | {"CF_ACCESS_TEAM_DOMAIN": "me", "CF_ACCESS_AUD": "AUD1"})
-    assert client.get("/api/overview").status_code == 401
-    assert client.get("/api/overview", headers={"Cf-Access-Jwt-Assertion": "junk"}).status_code == 403
+    # a forged Tailscale header is useless until an owner login is configured
+    assert client.get("/api/overview", headers={"x-forwarded-for": "9.9.9.9", "tailscale-user-login": "me@example.com"}).status_code == 403
 
 
 def test_state_changing_calls_require_csrf(client):
@@ -134,13 +95,13 @@ def test_agent_payload_validation_and_size(client):
     assert client.post("/agent/v1/metrics", content=b"x" * 600_000, headers={**h, "content-type": "application/json"}).status_code == 413
 
 
-def test_mac_data_flows_to_overview_and_goes_disconnected(client):
+def test_mac_data_flows_to_overview_and_goes_offline(client):
     h = {"Authorization": "Bearer " + client.token}
     client.post("/agent/v1/metrics", json=agent_payload(), headers=h)
     ov = client.get("/api/overview").json()["mac"]
     assert ov["connection"] == "connected" and ov["health"] == "healthy" and ov["mem_pct"] == 62.5
     client.st.db.execute("UPDATE samples SET ts=ts-1000"); client.st.hub.last_seen = time.time() - 1000
-    assert client.get("/api/overview").json()["mac"]["health"] == "disconnected"
+    assert client.get("/api/overview").json()["mac"]["health"] == "offline"
     assert client.get("/api/overview").json()["hetzner"]["health"] == "unknown"
 
 
@@ -169,9 +130,9 @@ def test_telegram_test_notification(client):
 
 
 def test_no_secrets_in_api_responses(client):
-    save_env_file(client.st.paths.secrets, client.st.secrets.all() | {"CF_ACCESS_AUD": "SECRETAUD", "CF_ACCESS_TEAM_DOMAIN": "teamx"})
+    save_env_file(client.st.paths.secrets, client.st.secrets.all() | {"TAILSCALE_OWNER_LOGIN": "secretowner@example.com"})
     body = json.dumps([client.get(u).json() for u in ("/api/settings", "/api/overview", "/api/alerts", "/api/audit")])
-    for secret in ("TESTTOKEN", "1:T", "whsec", client.token, client.token.split(".", 1)[1], "SECRETAUD"):
+    for secret in ("TESTTOKEN", "1:T", "whsec", client.token, client.token.split(".", 1)[1], "secretowner@example.com"):
         assert secret not in body
 
 
@@ -182,8 +143,18 @@ def test_history_and_alerts_endpoints(client):
     r = client.get("/api/history?machine=mac&range=1h").json()
     assert r["points"] and client.get("/api/history?machine=mac&range=999h").status_code == 400
     assert client.get("/api/alerts").json() == {"alerts": []}
-    assert client.get("/api/overview").json()["retention"]["max_hours"] == 72
+    assert client.get("/api/overview").json()["retention"]["max_hours"] == 24
 
 
 def test_docs_and_openapi_disabled(client):
     assert client.get("/docs").status_code in (404, 403) and client.get("/openapi.json").status_code in (404, 403)
+
+
+def test_tailscale_serve_owner_only(client):
+    save_env_file(client.st.paths.secrets, client.st.secrets.all() | {"TAILSCALE_OWNER_LOGIN": "Me@Example.com"})
+    ok = {"x-forwarded-for": "100.64.0.9", "tailscale-user-login": "me@example.com"}
+    assert client.get("/api/overview", headers=ok).status_code == 200
+    assert client.get("/api/overview", headers={**ok, "tailscale-user-login": "other@example.com"}).status_code == 403
+    assert client.get("/api/overview", headers={"x-forwarded-for": "100.64.0.9"}).status_code == 403          # no identity
+    assert client.get("/api/overview", headers={**ok, "tailscale-funnel-request": "?1"}).status_code == 403    # Funnel/public
+    assert client.get("/api/overview", headers={**ok, "cf-connecting-ip": "9.9.9.9"}).status_code == 403

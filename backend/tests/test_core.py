@@ -29,28 +29,28 @@ def test_cpu_line_iowait_counts_as_idle():
 
 
 # ------------------------------------------------------------------ retention
-def test_retention_72h_hard_cap_and_cleanup(env):
+def test_retention_24h_hard_cap_and_cleanup(env):
     db, now = env.db, time.time()
-    add_sample(db, "mac", now - 80 * 3600)
-    add_sample(db, "mac", now - 71 * 3600)
+    add_sample(db, "mac", now - 30 * 3600)
+    add_sample(db, "mac", now - 23 * 3600)
     add_sample(db, "mac", now - 10)
-    add_snap(db, "mac", "procs", {}, now - 100 * 3600)
+    add_snap(db, "mac", "procs", {}, now - 40 * 3600)
     db.audit("owner", "stop.execute", "mac", "x", "stopped")
-    db.execute("UPDATE audit SET ts=?", (now - 73 * 3600,))
+    db.execute("UPDATE audit SET ts=?", (now - 25 * 3600,))
     db.execute("INSERT INTO incidents(id,rule,machine,subject,severity,state,title,first_seen,last_seen,recovered_at) VALUES('old','r','mac','','warning','recovered','t',?,?,?)",
-               (now - 90 * 3600, now - 80 * 3600, now - 80 * 3600))
-    removed = db.prune(100_000)                                      # a request for 'forever' is capped at 72 h
+               (now - 50 * 3600, now - 30 * 3600, now - 30 * 3600))
+    removed = db.prune(100_000)                                      # a request for 'forever' is capped at 24 h
     assert removed["samples"] == 1 and removed["snapshots"] == 1 and removed["audit"] == 1 and removed["incidents"] >= 1
     left = db.one("SELECT COUNT(*) c FROM samples")["c"]
     assert left == 2
-    assert db.oldest_record() >= now - 72 * 3600
+    assert db.oldest_record() >= now - 24 * 3600
 
 
-def test_retention_setting_cannot_exceed_72(env):
+def test_retention_setting_cannot_exceed_24(env):
     import pytest
     with pytest.raises(ValueError):
-        env.settings.update({"retention_hours": 96})
-    assert env.settings.update({"retention_hours": 24})["retention_hours"] == 24
+        env.settings.update({"retention_hours": 48})
+    assert env.settings.update({"retention_hours": 12})["retention_hours"] == 12
 
 
 def test_prune_survives_restart(env):
@@ -58,12 +58,12 @@ def test_prune_survives_restart(env):
     now = time.time()
     add_sample(env.db, "mac", now - 100 * 3600)
     db2 = DB(env.paths.db)                                           # "restart"
-    db2.prune(72)
+    db2.prune(24)
     assert db2.one("SELECT COUNT(*) c FROM samples")["c"] == 0
 
 
 def test_database_size_stays_bounded(env):
-    """72 h at 30 s for two machines, with process snapshots each minute, stays small."""
+    """24 h at 30 s for two machines, with process snapshots each minute, stays small."""
     now = time.time()
     env.db.execute("BEGIN")
     for i in range(8640):
@@ -72,7 +72,7 @@ def test_database_size_stays_bounded(env):
     for i in range(4320):
         add_snap(env.db, "mac", "procs", {"top": [{"pid": j, "name": "x" * 20, "rss": 1e8} for j in range(40)]}, now - i * 60)
     env.db.execute("COMMIT")
-    env.db.prune(72)
+    env.db.prune(24)
     assert env.db.size_bytes() < 60e6
 
 
@@ -109,7 +109,7 @@ def test_persistent_memory_alert_notifies_once_then_recovers(env):
     alerts = [m for m in env.tg.sent if "WARNING" in m["text"]]
     assert len(alerts) == 1                                         # deduplicated: one message for the whole incident
     assert "HETZNER SERVER" in alerts[0]["text"] and "Open dashboard" in alerts[0]["text"]
-    assert "https://monitor.example.com/#/alerts/inc_" in alerts[0]["text"]
+    assert "https://astra.example.ts.net/#/alerts/inc_" in alerts[0]["text"]
     assert alerts[0]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Review Dashboard"
     t = run_ticks(env, t, 300, 30, mem_pct=30)                       # clears
     rec = [m for m in env.tg.sent if "RECOVERED" in m["text"]]

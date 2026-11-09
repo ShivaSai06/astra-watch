@@ -116,7 +116,6 @@ class State:
         self.notifier = Notifier(self.db, self.settings, self.secrets, self.tg, self.actions)
         self.engine = Engine(self.db, self.settings, self.hub)
         self.agents = security.AgentRegistry(paths)
-        self.cf = security.CloudflareAccess()
         self.limiter = security.RateLimiter()
         self.collector = LinuxCollector()
         self.started = time.time()
@@ -161,28 +160,19 @@ def create_app(paths: Paths | None = None) -> FastAPI:
 
     # ---------------------------------------------------------------- auth dependencies
     def client_ip(request: Request) -> str:
-        return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+        return request.client.host if request.client else "?"
 
     async def owner(request: Request) -> str:
         if not st.limiter.allow("dash:" + client_ip(request), 240, 60):
             raise HTTPException(429, "Too many requests")
         sec = st.secrets.all()
-        team, aud = sec.get("CF_ACCESS_TEAM_DOMAIN"), sec.get("CF_ACCESS_AUD")
-        if team and aud:
-            tok = request.headers.get("cf-access-jwt-assertion")
-            if not tok:
-                raise HTTPException(401, "Cloudflare Access login required")
-            try:
-                claims = await asyncio.to_thread(st.cf.verify, tok, team, aud, sec.get("OWNER_EMAIL", ""))
-            except PermissionError as e:
-                raise HTTPException(403, f"Access denied: {e}") from None
-            except Exception:
-                raise HTTPException(503, "Cannot verify Cloudflare Access token") from None
-            return claims.get("email", "owner")
-        # Fail closed: until Access is configured, only direct loopback (SSH port-forward) is allowed.
+        ts_owner = sec.get("TAILSCALE_OWNER_LOGIN")
+        if ts_owner and security.tailscale_owner_ok(request.client.host if request.client else None, request.headers, ts_owner):
+            return ts_owner
+        # Fail closed: anything else must be a direct loopback connection (e.g. an SSH port-forward).
         if security.is_direct_loopback(request.client.host if request.client else None, request.headers):
             return "owner"
-        raise HTTPException(403, "Cloudflare Access is not configured on the server; remote access is disabled.")
+        raise HTTPException(403, "Access denied: open the dashboard through your private Tailscale address.")
 
     async def csrf(request: Request, who: str = Depends(owner)) -> str:
         if not security.csrf_ok(request.cookies.get("csrf"), request.headers.get("x-csrf-token"),
@@ -255,7 +245,7 @@ def create_app(paths: Paths | None = None) -> FastAPI:
     # ---------------------------------------------------------------- Telegram webhook
     @app.post("/telegram/webhook")
     async def telegram_webhook(request: Request):
-        # Independent of Cloudflare Access: authenticated by secret header, then sender + chat id checks.
+        # Independent of the dashboard login: authenticated by secret header, then sender + chat id checks.
         if not st.limiter.allow("tg:" + client_ip(request), 120, 60):
             raise HTTPException(429, "Too many requests")
         expected = st.secrets.get("TELEGRAM_WEBHOOK_SECRET")
@@ -278,7 +268,10 @@ def create_app(paths: Paths | None = None) -> FastAPI:
 
     @app.get("/api/overview")
     async def overview(_: str = Depends(owner)):
-        return {m: machine_summary(st, m) for m in ("mac", "hetzner")} | {"retention": retention_info(st)}
+        # Reads cached rows from SQLite only. It never triggers a collection, a Docker call or a process scan.
+        return {m: machine_summary(st, m) for m in ("mac", "hetzner")} | {
+            "retention": retention_info(st), "server_time": time.time(),
+            "dashboard_refresh_seconds": st.settings.get()["dashboard_refresh_seconds"]}
 
     @app.get("/api/machine/{machine}")
     async def machine_detail(machine: str, _: str = Depends(owner)):
@@ -298,9 +291,9 @@ def create_app(paths: Paths | None = None) -> FastAPI:
 
     @app.get("/api/history")
     async def history(machine: str, range: str = "1h", _: str = Depends(owner)):
-        if machine not in ("mac", "hetzner") or range not in ("1h", "24h", "72h"):
+        if machine not in ("mac", "hetzner") or range not in ("1h", "24h"):
             raise HTTPException(400, "bad parameters")
-        secs = {"1h": 3600, "24h": 86400, "72h": 72 * 3600}[range]
+        secs = {"1h": 3600, "24h": 86400}[range]
         now = time.time()
         bucket = max(secs / 180, 10)
         rows = st.db.query(
@@ -332,17 +325,17 @@ def create_app(paths: Paths | None = None) -> FastAPI:
             "notifications": [dict(r) for r in st.db.query("SELECT * FROM notifications ORDER BY ts DESC LIMIT 50")]}
 
     @app.get("/api/settings")
-    async def get_settings(_: str = Depends(owner)):
-        return settings_view(st)
+    async def get_settings(request: Request, _: str = Depends(owner)):
+        return settings_view(st, request)
 
     @app.put("/api/settings")
-    async def put_settings(patch: dict, _: str = Depends(csrf)):
+    async def put_settings(patch: dict, request: Request, _: str = Depends(csrf)):
         try:
             st.settings.update(patch)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
         st.db.audit("owner", "settings.update", outcome="ok", detail=",".join(patch.keys()))
-        return settings_view(st)
+        return settings_view(st, request)
 
     @app.post("/api/telegram/test")
     async def telegram_test(_: str = Depends(csrf)):
@@ -401,6 +394,16 @@ def create_app(paths: Paths | None = None) -> FastAPI:
 
 
 # ------------------------------------------------------------------ helpers
+def connection_state(age: float | None, grace: float, offline_after: float) -> str:
+    """connected: reported within `grace`; stale: missed reports but not yet long enough to call it gone
+    (a sleeping laptop); offline: silent for `offline_after` or more. No data at all -> unknown."""
+    if age is None:
+        return "unknown"
+    if age < grace:
+        return "connected"
+    return "stale" if age < max(offline_after, grace) else "offline"
+
+
 def machine_summary(st: State, machine: str) -> dict:
     now = time.time()
     s = st.engine.latest(machine)
@@ -410,17 +413,15 @@ def machine_summary(st: State, machine: str) -> dict:
     last = s["ts"] if s else None
     if machine == "mac" and last:
         last = max(last, st.hub.last_seen)
-    if not s:
-        conn = "unknown"
-    elif machine == "mac":
-        conn = "connected" if now - last < t["agent_grace_seconds"] else "disconnected"
+    if machine == "mac":
+        grace, offline_after = t["agent_grace_seconds"], t["agent_notify_minutes"] * 60
     else:
-        conn = "connected" if now - last < max(90, 4 * interval) else "disconnected"
+        grace = max(90, 4 * interval)
+        offline_after = 5 * grace
+    conn = connection_state(None if last is None else now - last, grace, offline_after)
     state = st.db.kv_get("mac_agent_state", {}) if machine == "mac" else {}
-    if conn == "unknown":
-        health = "unknown"
-    elif conn == "disconnected":
-        health = "disconnected"
+    if conn in ("unknown", "stale", "offline"):
+        health = conn                       # old metrics are never shown as "healthy"
     elif any(i["severity"] == "critical" for i in incs):
         health = "critical"
     elif incs:
@@ -430,6 +431,8 @@ def machine_summary(st: State, machine: str) -> dict:
     cont = st.engine.snap(machine, "containers", max_age=900)
     return {
         "machine": machine, "health": health, "connection": conn, "last_update": s["ts"] if s else None,
+        "last_seen": last, "age_seconds": None if last is None else round(now - last, 1),
+        "fresh": conn == "connected", "server_time": now,
         "cpu": s["cpu"] if s else None, "mem_pct": s["mem_pct"] if s else None,
         "mem_total": s["mem_total"] if s else None, "mem_used": s["mem_used"] if s else None,
         "swap_used": s["swap_used"] if s else None, "swap_total": s["swap_total"] if s else None,
@@ -443,11 +446,20 @@ def machine_summary(st: State, machine: str) -> dict:
 
 def retention_info(st: State) -> dict:
     oldest = st.db.oldest_record()
-    return {"hours": st.settings.get()["retention_hours"], "max_hours": 72, "oldest": oldest,
+    return {"hours": st.settings.get()["retention_hours"], "max_hours": 24, "oldest": oldest,
             "db_bytes": st.db.size_bytes(), "last_prune": st.db.kv_get("last_prune")}
 
 
-def settings_view(st: State) -> dict:
+def remote_access(sec: dict, request: Request) -> dict:
+    """What THIS request tells us about how the dashboard is being reached (no shelling out to tailscale)."""
+    h = request.headers
+    via = security.tailscale_owner_ok(request.client.host if request.client else None, h, sec.get("TAILSCALE_OWNER_LOGIN"))
+    return {"method": "Tailscale", "connected": via, "owner_restricted": bool(sec.get("TAILSCALE_OWNER_LOGIN")),
+            "https": request.url.scheme == "https" or h.get("x-forwarded-proto") == "https" or via,
+            "funnel": "tailscale-funnel-request" in h, "access": "Private tailnet"}
+
+
+def settings_view(st: State, request: Request) -> dict:
     sec = st.secrets.all()
     last = st.db.one("SELECT ts,status,detail FROM notifications WHERE kind='test' ORDER BY ts DESC LIMIT 1")
     return {
@@ -455,7 +467,7 @@ def settings_view(st: State) -> dict:
         "telegram": {"configured": st.tg.configured(), "mode": sec.get("TELEGRAM_MODE", "webhook"),
                      "webhook_secret_set": bool(sec.get("TELEGRAM_WEBHOOK_SECRET")),
                      "last_test": dict(last) if last else None},
-        "cloudflare_access": {"configured": bool(sec.get("CF_ACCESS_TEAM_DOMAIN") and sec.get("CF_ACCESS_AUD"))},
+        "remote_access": remote_access(sec, request),
         "agents": st.agents.list(),
         "agent_state": st.db.kv_get("mac_agent_state", {}),
         "retention": retention_info(st),
@@ -598,7 +610,7 @@ async def maintenance_loop(st: State):
 
 
 def backup(st: State) -> Path:
-    """Copy the small DB (online-consistent) and config. DB backups older than 72 h are removed so the
+    """Copy the small DB (online-consistent) and config. DB backups older than 24 h are removed so the
     retention limit also holds for backups."""
     d = st.paths.base / "backups"
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -609,7 +621,7 @@ def backup(st: State) -> Path:
     cfg = d / f"config-{stamp}"
     shutil.copytree(st.paths.config, cfg)
     for p in list(d.glob("watcher-*.sqlite3")):
-        if time.time() - p.stat().st_mtime > 72 * 3600:
+        if time.time() - p.stat().st_mtime > 24 * 3600:
             p.unlink()
     for p in sorted(d.glob("config-*"))[:-7]:
         shutil.rmtree(p, ignore_errors=True)

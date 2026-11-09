@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Overview, get } from "./api";
+import { Overview, get, setRefreshSeconds } from "./api";
+import { useRefreshMs } from "./pages";
 import { AlertsPage, MachinePage, OverviewPage, SettingsPage } from "./pages";
 import "./styles.css";
 
@@ -13,7 +14,11 @@ function useRoute() {
 function App() {
   const [seg0, seg1] = useRoute();
   const [ov, setOv] = useState<Overview | null>(null);
-  useEffect(() => { const l = () => get<Overview>("/api/overview").then(setOv).catch(() => {}); l(); const i = setInterval(l, 15000); return () => clearInterval(i); }, []);
+  const ms = useRefreshMs();
+  useEffect(() => {
+    const l = () => get<Overview>("/api/overview").then(o => { setOv(o); setRefreshSeconds(o.dashboard_refresh_seconds); }).catch(() => {});
+    l(); const i = setInterval(l, ms); return () => clearInterval(i);
+  }, [ms]);
   const crit = (ov?.mac.alerts.length ?? 0) + (ov?.hetzner.alerts.length ?? 0);
   const anyCrit = [...(ov?.mac.alerts ?? []), ...(ov?.hetzner.alerts ?? [])].some(a => a.severity === "critical");
   const cur = seg0 ?? "";

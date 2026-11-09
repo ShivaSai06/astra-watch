@@ -123,8 +123,8 @@ class DB:
 
     # ---- retention ------------------------------------------------------
     def prune(self, hours: float, now: float | None = None) -> dict[str, int]:
-        """Delete everything older than `hours` (capped at 72). Returns rows removed per table."""
-        hours = min(float(hours), 72.0)
+        """Delete everything older than `hours` (capped at 24). Returns rows removed per table."""
+        hours = min(float(hours), 24.0)
         cutoff = (now or time.time()) - hours * 3600
         removed: dict[str, int] = {}
         with self._lock:

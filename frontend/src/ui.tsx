@@ -20,7 +20,7 @@ export function ago(ts?: number | null) {
 }
 export const fmtDur = (s: number) => (s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 export const STATE_LABEL: Record<string, string> = {
-  healthy: "Healthy", warning: "Warning", critical: "Critical", disconnected: "Disconnected", unknown: "Unknown",
+  healthy: "Healthy", warning: "Warning", critical: "Critical", stale: "Stale", offline: "Offline", unknown: "Unknown",
 };
 
 export function Meter({ pct, warn = 85, crit = 95, invert = false }: { pct: number | null; warn?: number; crit?: number; invert?: boolean }) {

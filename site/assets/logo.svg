@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Astra Watch logo">
+  <rect width="64" height="64" rx="14" fill="#0f1317"/>
+  <path d="M6 33c6-11 15-17 26-17s20 6 26 17c-6 11-15 17-26 17S12 44 6 33z" fill="none" stroke="#7fb4e8" stroke-width="3.5" stroke-linejoin="round"/>
+  <circle cx="32" cy="33" r="9" fill="#4ec58a"/>
+  <path d="M32 6l2.2 5.4L40 13l-5.8 1.6L32 20l-2.2-5.4L24 13l5.8-1.6z" fill="#e9b949"/>
+</svg>

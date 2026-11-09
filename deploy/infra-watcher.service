@@ -8,7 +8,7 @@ WorkingDirectory=%h/pi-watcher/current
 Environment=PYTHONPATH=%h/pi-watcher/current/vendor:%h/pi-watcher/current/backend
 Environment=WATCHER_HOME=%h/pi-watcher
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/usr/bin/python3 -m uvicorn watcher.main:create_app --factory --host 127.0.0.1 --port 8200 --workers 1 --no-access-log --no-server-header --log-level warning
+ExecStart=/usr/bin/python3 -m uvicorn watcher.main:create_app --factory --host 127.0.0.1 --port 8200 --workers 1 --no-proxy-headers --no-access-log --no-server-header --log-level warning
 Restart=always
 RestartSec=5
 # Be a good neighbour on a small server: low priority and hard ceilings.

@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { ApiError, Container, Detail, Incident, Overview, Proc, Summary, get, send } from "./api";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { ApiError, Container, Detail, Incident, Overview, Proc, Summary, get, getRefreshMs, send, subscribeRefresh } from "./api";
 import { LineChart, Meter, STATE_LABEL, Stat, StopDialog, ago, fmtBytes, fmtDur, fmtPct, fmtTime } from "./ui";
 
-export function usePoll<T>(path: string, ms = 15000) {
+export const useRefreshMs = () => useSyncExternalStore(subscribeRefresh, getRefreshMs);
+
+/** Re-reads a cached API endpoint every dashboard_refresh_seconds. These endpoints never trigger collection. */
+export function usePoll<T>(path: string) {
+  const ms = useRefreshMs();
   const [data, setData] = useState<T | null>(null);
   const [err, setErr] = useState("");
   const load = useCallback(() => get<T>(path).then(d => { setData(d); setErr(""); }).catch(e => setErr(e instanceof ApiError ? e.message : String(e))), [path]);
@@ -12,7 +16,8 @@ export function usePoll<T>(path: string, ms = 15000) {
 
 function verdict(s: Summary): string {
   if (s.health === "unknown") return "No data yet.";
-  if (s.health === "disconnected") return `No update since ${ago(s.last_update)}. ${s.machine === "mac" ? "The Mac may be asleep or offline." : "The collector has stopped reporting."}`;
+  if (s.health === "stale") return `Not reporting. Last update ${ago(s.last_update)}; the values below are the last ones received, not current. ${s.machine === "mac" ? "The Mac may be asleep." : ""}`;
+  if (s.health === "offline") return `Offline. Last seen ${ago(s.last_seen)}; the values below are the last ones received, not current. ${s.machine === "mac" ? "The Mac is asleep, shut down or the agent is stopped." : "The collector has stopped reporting."}`;
   if (!s.alerts.length) return "Everything looks normal.";
   return s.alerts.length === 1 ? s.alerts[0].title + "." : `${s.alerts.length} problems: ${s.alerts[0].title.toLowerCase()} and more.`;
 }
@@ -29,16 +34,16 @@ function SystemCard({ s, name, href }: { s: Summary; name: string; href: string 
         <Stat label="Swap" value={fmtBytes(s.swap_used)} sub={s.swap_total ? `of ${fmtBytes(s.swap_total)}` : ""} meter={<Meter pct={s.swap_total ? (100 * (s.swap_used ?? 0)) / s.swap_total : 0} warn={70} crit={90} />} />
         <Stat label="Storage free" value={fmtBytes(s.disk_free)} sub={free != null ? `${Math.round(free)}% free` : ""} meter={<Meter pct={free == null ? null : 100 - free} invert />} />
         {s.machine === "hetzner" && <Stat label="Docker containers" value={s.containers == null ? "–" : String(s.containers)} sub="running" />}
-        <Stat label="Connection" value={s.connection === "connected" ? "Connected" : s.connection === "unknown" ? "Unknown" : "Disconnected"} />
+        <Stat label="Connection" value={({ connected: "Connected", stale: "Stale", offline: "Offline", unknown: "Unknown" } as const)[s.connection]} sub={s.connection === "connected" ? "data is current" : "data is not current"} />
       </dl>
       {s.alerts.map(a => <a key={a.id} className="alert-line" href={`#/alerts/${a.id}`}><span className={`dot ${a.severity}`} />{a.title}</a>)}
-      <div className="foot">Last successful update: {s.last_update ? `${ago(s.last_update)} (${fmtTime(s.last_update)})` : "never"}</div>
+      <div className="foot">Last seen: {s.last_update ? `${ago(s.last_update)} (${fmtTime(s.last_update)})` : "never"}{s.fresh ? "" : " · showing last reported values"}</div>
     </section>
   );
 }
 
 export function OverviewPage() {
-  const { data, err } = usePoll<Overview>("/api/overview", 10000);
+  const { data, err } = usePoll<Overview>("/api/overview");
   return (
     <>
       <h1>Overview</h1>
@@ -57,11 +62,11 @@ export function OverviewPage() {
   );
 }
 
-const RANGES = [["1h", "Last hour"], ["24h", "24 hours"], ["72h", "72 hours"]] as const;
+const RANGES = [["1h", "Last hour"], ["24h", "24 hours"]] as const;
 
 function Trends({ machine }: { machine: string }) {
-  const [range, setRange] = useState<"1h" | "24h" | "72h">("1h");
-  const { data } = usePoll<{ points: any[] }>(`/api/history?machine=${machine}&range=${range}`, 30000);
+  const [range, setRange] = useState<"1h" | "24h">("1h");
+  const { data } = usePoll<{ points: any[] }>(`/api/history?machine=${machine}&range=${range}`);
   const pts = (k: string) => (data?.points ?? []).map(p => ({ t: p.ts, v: p[k] as number | null }));
   const free = (data?.points ?? []).map(p => ({ t: p.ts, v: p.disk_free != null ? p.disk_free / 1e9 : null }));
   return (
@@ -130,7 +135,7 @@ function ContainerTable({ rows, onStop }: { rows: Container[]; onStop: (c: Conta
 }
 
 export function MachinePage({ machine }: { machine: "mac" | "hetzner" }) {
-  const { data: d, err, reload } = usePoll<Detail>(`/api/machine/${machine}`, 15000);
+  const { data: d, err, reload } = usePoll<Detail>(`/api/machine/${machine}`);
   const [stop, setStop] = useState<any>(null);
   const s = d?.sample;
   const mac = machine === "mac";
@@ -226,7 +231,7 @@ export function MachinePage({ machine }: { machine: "mac" | "hetzner" }) {
 const sevOrder = (i: Incident) => (i.state === "active" ? 0 : 1);
 
 export function AlertsPage({ selected }: { selected?: string }) {
-  const { data, err } = usePoll<{ alerts: Incident[] }>("/api/alerts", 10000);
+  const { data, err } = usePoll<{ alerts: Incident[] }>("/api/alerts");
   const [stop, setStop] = useState<any>(null);
   const list = [...(data?.alerts ?? [])].sort((a, b) => sevOrder(a) - sevOrder(b) || b.first_seen - a.first_seen);
   useEffect(() => { if (selected && data) document.getElementById(selected)?.scrollIntoView({ block: "center" }); }, [selected, data]);
@@ -235,7 +240,7 @@ export function AlertsPage({ selected }: { selected?: string }) {
       <h1>Alerts</h1>
       <p className="sub">Problems that lasted long enough to matter. Nothing here is ever stopped automatically.</p>
       {err && <div className="banner">{err}</div>}
-      {data && list.length === 0 && <div className="empty">No alerts in the last 72 hours.</div>}
+      {data && list.length === 0 && <div className="empty">No alerts in the last 24 hours.</div>}
       {list.map(a => {
         const state = a.state === "active" ? a.severity : "recovered";
         return (
@@ -271,22 +276,23 @@ const THRESH: [string, string, string][] = [
   ["cpu_warn", "CPU warning (%)", "number"], ["cpu_crit", "CPU critical (%)", "number"],
   ["disk_free_warn", "Disk warning when free below (%)", "number"], ["disk_free_crit", "Disk critical when free below (%)", "number"],
   ["swap_growth_mb", "Swap growth in 30 min (MB)", "number"], ["restart_count", "Container restarts in 15 min", "number"],
-  ["agent_notify_minutes", "Notify Mac disconnected after (min)", "number"], ["vitest_workers", "Test workers left running", "number"],
+  ["agent_grace_seconds", "Mac shown as Stale after no report for (s)", "number"], ["agent_notify_minutes", "Mac shown as Offline, and notified, after (min)", "number"], ["vitest_workers", "Test workers left running", "number"],
   ["docker_vm_gb", "Docker VM memory warning (GB)", "number"], ["log_size_mb", "Container log warning (MB)", "number"],
 ];
 const TOP: [string, string][] = [
-  ["refresh_interval", "Refresh interval (s)"], ["persist_seconds", "Problem must last (s) before notifying"],
+  ["dashboard_refresh_seconds", "Dashboard refresh (s): how often this page re-reads data"],
+  ["refresh_interval", "Collection interval (s): server sampling, alert checks, Mac agent reports"], ["persist_seconds", "Problem must last (s) before notifying"],
   ["cpu_persist_seconds", "CPU must stay high for (s)"], ["cooldown_minutes", "Notification cooldown (min)"],
-  ["retention_hours", "History kept (h, max 72)"],
+  ["retention_hours", "History kept (h, max 24)"],
 ];
 
 export function SettingsPage() {
-  const { data, err, reload } = usePoll<any>("/api/settings", 20000);
+  const { data, err, reload } = usePoll<any>("/api/settings");
   const [form, setForm] = useState<any>(null);
   const [msg, setMsg] = useState("");
   useEffect(() => { if (data && !form) setForm(data.settings); }, [data, form]);
   if (!data || !form) return <><h1>Settings</h1>{err && <div className="banner">{err}</div>}</>;
-  const tg = data.telegram, ag = data.agent_state, ret = data.retention;
+  const tg = data.telegram, ag = data.agent_state, ret = data.retention, ra = data.remote_access;
   const save = async () => {
     try { await send("PUT", "/api/settings", { ...form }); setMsg("Saved."); reload(); } catch (e) { setMsg(e instanceof ApiError ? e.message : String(e)); }
   };
@@ -300,7 +306,14 @@ export function SettingsPage() {
     <>
       <h1>Settings</h1>
       <p className="sub">One owner. Secrets are never shown here; they are set on the server with <span className="mono">watcherctl</span>.</p>
-      {!data.cloudflare_access.configured && <div className="banner">Cloudflare Access is not configured on the server yet. Remote access stays blocked until it is.</div>}
+      <h2>Remote access</h2>
+      <div className="card"><dl className="kv" style={{ margin: 0 }}>
+        <dt>Remote access</dt><dd>{ra.method}</dd>
+        <dt>Connection</dt><dd>{ra.connected ? "Connected (this page was reached through Tailscale)" : "Not through Tailscale (direct local connection)"}</dd>
+        <dt>HTTPS</dt><dd>{ra.https ? "Enabled" : "Not detected on this connection"}</dd>
+        <dt>Access</dt><dd>{ra.access}{ra.owner_restricted ? ", limited to one authorised Tailscale identity" : " (owner identity not set)"}</dd>
+        <dt>Funnel</dt><dd>{ra.funnel ? "ACTIVE: this request came from the public internet" : "Disabled"}</dd>
+      </dl></div>
       <h2>Telegram</h2>
       <div className="card"><dl className="kv" style={{ margin: 0 }}>
         <dt>Connection</dt><dd>{tg.configured ? "Connected to one authorised chat" : "Not set up. Run watcherctl setup-telegram on the server."}</dd>
@@ -343,12 +356,12 @@ export function SettingsPage() {
 }
 
 function ActionHistory() {
-  const { data } = usePoll<{ actions: any[] }>("/api/audit", 30000);
+  const { data } = usePoll<{ actions: any[] }>("/api/audit");
   return (
     <>
       <h2>Stop history</h2>
       <div className="tablewrap"><table><tbody>
-        {!data?.actions.length && <tr><td className="muted">No stop actions in the last 72 hours.</td></tr>}
+        {!data?.actions.length && <tr><td className="muted">No stop actions in the last 24 hours.</td></tr>}
         {data?.actions.map(a => <tr key={a.id}><td>{fmtTime(a.ts)}</td><td>{a.action.replace("stop.", "")}</td><td>{a.machine}</td><td>{a.target}</td><td>{a.outcome}</td></tr>)}
       </tbody></table></div>
     </>

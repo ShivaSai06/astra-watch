@@ -1,20 +1,18 @@
 """Authentication, CSRF and rate limiting.
 
 Three independent trust domains, each with its own credential:
-  1. Dashboard (browser)   -> Cloudflare Access JWT (verified here) + CSRF for state changes
+  1. Dashboard (browser)   -> Tailscale identity (set by `tailscale serve`, checked here) + CSRF for state changes
   2. Mac agent             -> per-agent bearer token, stored only as a SHA-256 hash
   3. Telegram webhook      -> secret header + authorised user id + authorised private chat id
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import json
 import secrets
 import threading
 import time
-import urllib.request
 from collections import defaultdict, deque
 
 from .config import Paths, write_private
@@ -103,65 +101,6 @@ class AgentRegistry:
                 for k, v in self._load().items()]
 
 
-# ------------------------------------------------------------------ Cloudflare Access
-
-
-def _b64d(s: str) -> bytes:
-    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
-
-
-class CloudflareAccess:
-    """Verifies the Cf-Access-Jwt-Assertion header (RS256) against the team's published keys."""
-
-    def __init__(self):
-        self._jwks: tuple[float, dict] | None = None
-
-    def _keys(self, team: str) -> dict:
-        if self._jwks and time.time() - self._jwks[0] < 3600:
-            return self._jwks[1]
-        url = f"https://{team}.cloudflareaccess.com/cdn-cgi/access/certs"
-        with urllib.request.urlopen(url, timeout=8) as r:  # noqa: S310 - fixed https host
-            keys = {k["kid"]: k for k in json.load(r)["keys"]}
-        self._jwks = (time.time(), keys)
-        return keys
-
-    def verify(self, token: str, team: str, aud: str, owner_email: str = "", keys: dict | None = None,
-               now: float | None = None) -> dict:
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.asymmetric import padding, rsa
-
-        try:
-            h, p, s = token.split(".")
-            header = json.loads(_b64d(h))
-            claims = json.loads(_b64d(p))
-        except Exception as e:  # malformed
-            raise PermissionError("malformed token") from e
-        if header.get("alg") != "RS256":
-            raise PermissionError("unsupported algorithm")
-        keys = keys if keys is not None else self._keys(team)
-        jwk = keys.get(header.get("kid"))
-        if not jwk:
-            raise PermissionError("unknown signing key")
-        pub = rsa.RSAPublicNumbers(int.from_bytes(_b64d(jwk["e"]), "big"),
-                                   int.from_bytes(_b64d(jwk["n"]), "big")).public_key()
-        try:
-            pub.verify(_b64d(s), f"{h}.{p}".encode(), padding.PKCS1v15(), hashes.SHA256())
-        except Exception as e:
-            raise PermissionError("bad signature") from e
-        t = now or time.time()
-        if claims.get("exp", 0) < t or claims.get("nbf", 0) > t + 60:
-            raise PermissionError("token expired")
-        auds = claims.get("aud")
-        auds = [auds] if isinstance(auds, str) else (auds or [])
-        if aud not in auds:
-            raise PermissionError("wrong audience")
-        if claims.get("iss") != f"https://{team}.cloudflareaccess.com":
-            raise PermissionError("wrong issuer")
-        if owner_email and claims.get("email", "").lower() != owner_email.lower():
-            raise PermissionError("not the owner")
-        return claims
-
-
 # ------------------------------------------------------------------ CSRF
 
 
@@ -180,12 +119,26 @@ def csrf_ok(cookie: str | None, header: str | None, origin: str | None, host: st
     return True
 
 
-PROXY_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-real-ip", "forwarded", "cf-access-jwt-assertion")
+# Headers a reverse proxy adds. A request carrying any of them is never treated as a direct local connection.
+PROXY_HEADERS = ("x-forwarded-for", "x-real-ip", "forwarded", "cf-connecting-ip", "cf-ray")
+
+
+def tailscale_owner_ok(client_host: str | None, headers, owner_login: str | None) -> bool:
+    """True for a request proxied by the local `tailscale serve` on behalf of the configured owner.
+
+    tailscaled sets Tailscale-User-Login itself (strips any client-supplied copy) after authenticating the
+    WireGuard peer. Funnel (public internet) requests never carry it, and are rejected explicitly anyway."""
+    if not owner_login or client_host not in ("127.0.0.1", "::1"):
+        return False
+    if "tailscale-funnel-request" in headers or any(h in headers for h in ("cf-connecting-ip", "cf-ray")):
+        return False
+    login = (headers.get("tailscale-user-login") or "").strip().lower()
+    return bool(login) and hmac.compare_digest(login.encode(), owner_login.strip().lower().encode())
 
 
 def is_direct_loopback(client_host: str | None, headers) -> bool:
     """True only for a request made straight to 127.0.0.1 (e.g. through an SSH port-forward),
-    with none of the headers a reverse proxy / Cloudflare would add."""
+    with none of the headers a reverse proxy would add."""
     if client_host not in ("127.0.0.1", "::1"):
         return False
     return not any(h in headers for h in PROXY_HEADERS)

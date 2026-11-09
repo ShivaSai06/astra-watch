@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Astra Watch</title>
+<meta name="description" content="Astra Watch is a personal open-source project: private infrastructure monitoring for a dev Mac and a Linux server, with Docker visibility, Telegram alerts and Tailscale access.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#"><img src="assets/logo.svg" alt="" width="34" height="34"> Astra Watch</a>
+    <nav class="links" aria-label="Page sections">
+      <a href="#story">Why</a><a href="#features">Features</a><a href="#architecture">Architecture</a>
+      <a href="#stack">Stack</a><a href="#screenshots">Screenshots</a><a href="#security">Security</a>
+      <a href="https://github.com/ShivaSai06/astra-watch">GitHub</a>
+    </nav>
+  </header>
+</div>
+
+<main id="main">
+<div class="wrap">
+  <div class="hero">
+    <div>
+      <div class="eyebrow">Open-source personal project</div>
+      <h1>Private infrastructure monitoring for personal devices and servers.</h1>
+      <p class="lead">One lightweight dashboard for a MacBook and a Linux server: CPU, memory, disk, processes, Docker containers, alerts and Telegram notifications, reachable only over a private Tailscale network.</p>
+      <div class="btns">
+        <a class="btn primary" href="https://github.com/ShivaSai06/astra-watch">View on GitHub</a>
+        <a class="btn" href="#story">Why I built it</a>
+      </div>
+      <span class="badge">Not an enterprise platform: a real tool built for one developer's setup, free to fork and extend</span>
+    </div>
+    <figure class="shot">
+      <img src="assets/screenshots/overview.png" width="1360" height="620" alt="Astra Watch overview: a MacBook card showing Healthy and a server card showing a memory warning, with CPU, memory, swap and storage meters.">
+      <figcaption>The real dashboard, shown with synthetic demo data.</figcaption>
+    </figure>
+  </div>
+</div>
+
+<section id="story">
+  <div class="wrap story">
+    <h2>Why I built Astra Watch</h2>
+    <p>Managing multiple development machines and self-hosted services often means switching between terminal commands, Docker tools and different monitoring views just to understand what's happening.</p>
+    <p>I ran into this with my MacBook and a remote Linux server running several Docker-based workloads. When a machine got slow or a container started eating resources, I had to look at CPU, memory, disk space, running processes and container status separately. Checking the server meant connecting to it and running commands by hand.</p>
+    <p>I wanted a simpler way to answer a few questions:</p>
+    <ul class="asks">
+      <li>Are my machines online and healthy?</li>
+      <li>What is using the CPU and memory, and which processes or containers are the heaviest?</li>
+      <li>Are there disk or container problems?</li>
+      <li>Has a device stopped reporting?</li>
+      <li>Can I check all of this securely while I'm away from my computer?</li>
+    </ul>
+    <p>So I built Astra Watch: a small monitoring application that puts system metrics, process visibility, Docker monitoring and alerts into one private dashboard. It watches a local and a remote machine, keeps the last 24 hours of history, and sends Telegram notifications. Remote access goes through a private Tailscale network instead of the public internet.</p>
+    <p>I built it to solve a problem I actually had. It is a personal project, not a product, but other developers and self-hosters are welcome to read it, learn from it and extend it.</p>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="intro">Everything below is implemented and in daily use on my own machines.</p>
+    <div class="grid">
+      <div class="card"><h3>Multi-device monitoring</h3><p>A MacBook (through a small agent) and a Linux server (collected locally), side by side. Each shows Connected, Stale or Offline, with a last-seen time.</p></div>
+      <div class="card"><h3>CPU and memory</h3><p>Current usage, load, memory pressure and 1-hour / 24-hour trend charts.</p></div>
+      <div class="card"><h3>Disk and swap</h3><p>Free space, how fast it is shrinking, and swap that keeps growing.</p></div>
+      <div class="card"><h3>Process visibility</h3><p>Top processes by CPU and memory. On the Mac, development workloads such as Node and test workers are grouped.</p></div>
+      <div class="card"><h3>Docker containers</h3><p>Status, health, restarts, CPU, memory, log size and Docker disk usage per container.</p></div>
+      <div class="card"><h3>Alerts and incident history</h3><p>Problems must last a few minutes before they alert, then show cause, impact and a suggested action. Recovered incidents stay for 24 hours.</p></div>
+      <div class="card"><h3>Telegram notifications</h3><p>One message per incident (no repeat spam), plus a "cleared" message when it recovers.</p></div>
+      <div class="card"><h3>Private access with Tailscale</h3><p>Reachable only from my own tailnet, over HTTPS, limited to one identity. Funnel is off.</p></div>
+      <div class="card"><h3>Controlled stop actions</h3><p>A runaway container can be stopped only after an explicit confirmation. Nothing is stopped automatically.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="architecture">
+  <div class="wrap">
+    <h2>Architecture</h2>
+    <p class="intro">A small agent on the Mac sends metrics to a backend on the server. The same backend watches the server itself, stores 24 hours in SQLite, evaluates alerts and talks to Telegram. Tailscale is the only way in.</p>
+    <div class="diagram">
+      <svg viewBox="0 0 900 360" role="img" aria-labelledby="dt dd">
+        <title id="dt">Astra Watch architecture</title>
+        <desc id="dd">A Mac agent and a browser connect over Tailscale to Tailscale Serve on the server, which proxies to the FastAPI backend. The backend uses SQLite and Docker, and sends alerts to Telegram.</desc>
+        <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9aa7b3"/></marker></defs>
+        <rect class="priv" x="190" y="20" width="560" height="320" rx="16"/>
+        <text x="210" y="44" class="sub">Private Tailscale network (tailnet)</text>
+        <rect class="box" x="20" y="70" width="160" height="70" rx="10"/><text x="40" y="100">Mac agent</text><text x="40" y="120" class="sub">Python, launchd, Keychain</text>
+        <rect class="box" x="20" y="220" width="160" height="70" rx="10"/><text x="40" y="250">Browser</text><text x="40" y="270" class="sub">laptop or phone</text>
+        <rect class="box" x="230" y="145" width="170" height="70" rx="10"/><text x="250" y="175">Tailscale Serve</text><text x="250" y="195" class="sub">HTTPS, owner identity</text>
+        <rect class="box" x="450" y="70" width="170" height="70" rx="10"/><text x="470" y="100">Backend</text><text x="470" y="120" class="sub">FastAPI + rule engine</text>
+        <rect class="box" x="450" y="230" width="75" height="60" rx="10"/><text x="465" y="256">SQLite</text><text x="465" y="274" class="sub">24 h</text>
+        <rect class="box" x="545" y="230" width="75" height="60" rx="10"/><text x="560" y="256">Docker</text><text x="560" y="274" class="sub">stop on OK</text>
+        <rect class="box" x="780" y="70" width="100" height="70" rx="10"/><text x="800" y="100">Telegram</text><text x="800" y="120" class="sub">alerts</text>
+        <path class="arrow" d="M180 105 L230 165"/><path class="arrow" d="M180 255 L230 195"/>
+        <path class="arrow" d="M400 180 L450 120"/>
+        <path class="arrow" d="M500 140 L490 230"/><path class="arrow" d="M580 140 L585 230"/>
+        <path class="arrow" d="M620 105 L780 105"/>
+        <text x="40" y="330" class="sub">The Mac reports every 30 s. The server watches itself, independent of the Mac.</text>
+      </svg>
+    </div>
+    <div class="grid" style="margin-top:18px">
+      <div class="card"><h3>Mac agent</h3><p>Samples the Mac every 30 seconds and sends it to the backend with its own bearer token, stored in the macOS Keychain. launchd keeps it running.</p></div>
+      <div class="card"><h3>Hetzner backend</h3><p>Receives Mac data, reads <code>/proc</code> and Docker for the server's own metrics, runs the alert rules and serves the dashboard.</p></div>
+      <div class="card"><h3>SQLite</h3><p>One file with samples, snapshots and incidents. Anything older than 24 hours is deleted.</p></div>
+      <div class="card"><h3>Tailscale</h3><p>Makes the server reachable only from my devices, with an HTTPS certificate, and tells the backend who is asking.</p></div>
+      <div class="card"><h3>Telegram</h3><p>Receives alert messages and sends back Stop / Confirm taps, which the backend polls for.</p></div>
+    </div>
+    <p style="margin-top:18px">Read the details in the <a href="https://github.com/ShivaSai06/astra-watch/blob/main/docs/architecture.md">architecture document</a>.</p>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap">
+    <h2>Technology stack</h2>
+    <p class="intro">Deliberately small. Only what the project actually uses.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Technology</th><th>Used for</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Python 3.12, FastAPI, Uvicorn</td><td>Backend API, collection, rule engine</td><td>Easy to read <code>/proc</code>, typed validation, one light process</td></tr>
+        <tr><td>SQLite</td><td>Samples, incidents, audit log</td><td>No database server to run; plenty for 24 hours of two machines</td></tr>
+        <tr><td>Docker CLI</td><td>Container inspection, <code>docker stop</code></td><td>The server's workloads already run in Docker</td></tr>
+        <tr><td>Tailscale (Serve)</td><td>Private network, HTTPS, owner identity</td><td>Remote access without opening any public port</td></tr>
+        <tr><td>systemd user services</td><td>Run and restart the backend on the server</td><td>Resource limits, no root</td></tr>
+        <tr><td>launchd + macOS Keychain</td><td>Run the Mac agent, store its token</td><td>The native, supported way on macOS</td></tr>
+        <tr><td>Telegram Bot API</td><td>Alerts and confirmations</td><td>Push to my phone without building an app</td></tr>
+        <tr><td>React, TypeScript, Vite</td><td>The dashboard</td><td>Typed UI that builds to plain static files</td></tr>
+        <tr><td>pytest</td><td>Tests for rules, security and agents</td><td>Standard, fast</td></tr>
+      </tbody>
+    </table></div>
+    <p style="margin-top:14px">Full explanation: <a href="https://github.com/ShivaSai06/astra-watch/blob/main/docs/technology-stack.md">technology-stack.md</a>.</p>
+  </div>
+</section>
+
+<section id="screenshots">
+  <div class="wrap">
+    <h2>Screenshots</h2>
+    <p class="intro">Every screenshot here is the real application running on generated, synthetic data. No live machine, address or identity appears.</p>
+    <div class="shots">
+      <figure class="shot"><img loading="lazy" src="assets/screenshots/server.png" width="1360" height="1750" alt="Server page with CPU, memory and disk figures, trend charts and a table of Docker containers."><figcaption>Server: trends and Docker containers</figcaption></figure>
+      <figure class="shot"><img loading="lazy" src="assets/screenshots/overview-stale.png" width="1360" height="620" alt="Overview where the Mac card is marked Stale, greyed out, with the last-seen time."><figcaption>A silent Mac is marked Stale and its old numbers are labelled "not current"</figcaption></figure>
+      <figure class="shot"><img loading="lazy" src="assets/screenshots/alerts.png" width="1360" height="900" alt="Alerts page listing active incidents with cause, impact and recommendation."><figcaption>Alerts with cause and recommendation</figcaption></figure>
+      <figure class="shot"><img loading="lazy" src="assets/screenshots/settings.png" width="1360" height="1000" alt="Settings page showing remote access via Tailscale, HTTPS enabled, private tailnet, Funnel disabled."><figcaption>Settings: Tailscale access status and separate refresh / collection intervals</figcaption></figure>
+      <figure class="shot"><img loading="lazy" src="assets/screenshots/mac.png" width="1360" height="1100" alt="Mac page with memory pressure, development workloads and trends."><figcaption>Mac: memory pressure and development workloads</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="security">
+  <div class="wrap">
+    <h2>Security and privacy</h2>
+    <p class="intro">The real Astra Watch dashboard is private. This page is a separate static site and does not talk to it.</p>
+    <div class="grid">
+      <div class="card"><h3>Not on the public internet</h3><p>The live dashboard is only reachable from my own Tailscale network. <strong>Tailscale Funnel is disabled</strong> and the backend listens on localhost only.</p></div>
+      <div class="card"><h3>Private access plus a login check</h3><p>Being on the tailnet is not enough: the backend also requires the one authorised Tailscale identity, and CSRF tokens for changes.</p></div>
+      <div class="card"><h3>Separate credentials</h3><p>The Mac agent has its own revocable token (only its hash is stored on the server). Telegram is limited to my user and chat id.</p></div>
+      <div class="card"><h3>Stop needs confirmation</h3><p>Stopping a container is a two-step, single-use, time-limited approval for that exact target. Only <code>docker stop</code> is allowed.</p></div>
+    </div>
+    <p style="margin-top:18px">More in <a href="https://github.com/ShivaSai06/astra-watch/blob/main/docs/security.md">security.md</a>.</p>
+  </div>
+</section>
+
+<section id="status">
+  <div class="wrap">
+    <h2>Status and limitations</h2>
+    <div class="grid">
+      <div class="card"><h3 class="ok">Working</h3><p>Two-machine monitoring, Docker visibility, alerts, Telegram, Tailscale access, controlled stop, 24-hour retention, one-command deploy with automatic rollback.</p></div>
+      <div class="card"><h3 class="no">Limitations</h3><p>Exactly two machines (a Mac and one Linux server), one owner, 24 hours of history, and it cannot alert you if the server itself is off.</p></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap row">
+    <div>
+      <strong>Astra Watch</strong><br>
+      A personal project by <a href="https://github.com/ShivaSai06">ShivaSai06</a>. Status: working, in daily personal use.
+    </div>
+    <div>
+      <a href="https://github.com/ShivaSai06/astra-watch">GitHub repository</a> ·
+      <a href="https://github.com/ShivaSai06/astra-watch/blob/main/LICENSE">MIT license</a>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

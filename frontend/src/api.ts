@@ -37,16 +37,27 @@ export async function send<T>(method: "POST" | "PUT", path: string, body?: unkno
   return r.json();
 }
 
-export type Health = "healthy" | "warning" | "critical" | "disconnected" | "unknown";
+export type Health = "healthy" | "warning" | "critical" | "stale" | "offline" | "unknown";
+
+// How often the browser re-reads cached data. The server sets it (dashboard_refresh_seconds, default 30 s).
+let refreshMs = 30000;
+const listeners = new Set<() => void>();
+export const getRefreshMs = () => refreshMs;
+export const subscribeRefresh = (f: () => void) => { listeners.add(f); return () => { listeners.delete(f); }; };
+export function setRefreshSeconds(sec: number) {
+  const ms = Math.max(10, sec) * 1000;
+  if (ms !== refreshMs) { refreshMs = ms; listeners.forEach(f => f()); }
+}
 export interface AlertRef { id: string; severity: string; title: string }
 export interface Summary {
-  machine: "mac" | "hetzner"; health: Health; connection: string; last_update: number | null;
+  machine: "mac" | "hetzner"; health: Health; connection: "connected" | "stale" | "offline" | "unknown"; last_update: number | null;
+  last_seen: number | null; age_seconds: number | null; fresh: boolean;
   cpu: number | null; mem_pct: number | null; mem_total: number | null; mem_used: number | null;
   swap_used: number | null; swap_total: number | null; disk_free: number | null; disk_total: number | null;
   containers: number | null; alerts: AlertRef[]; agent: { host?: string; version?: string } | null;
 }
 export interface Retention { hours: number; max_hours: number; oldest: number | null; db_bytes: number }
-export interface Overview { mac: Summary; hetzner: Summary; retention: Retention }
+export interface Overview { mac: Summary; hetzner: Summary; retention: Retention; dashboard_refresh_seconds: number }
 
 export interface Proc {
   pid: number; ppid: number; name: string; exe?: string; cpu: number; rss: number; label?: string; eligible?: boolean;
