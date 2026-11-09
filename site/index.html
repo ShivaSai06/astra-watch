@@ -4,179 +4,242 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Astra Watch</title>
-<meta name="description" content="Astra Watch is a personal open-source project: private infrastructure monitoring for a dev Mac and a Linux server, with Docker visibility, Telegram alerts and Tailscale access.">
+<meta name="description" content="Astra Watch brings the health, resource use and alerts for your computer and your servers into one private place.">
+<meta name="theme-color" content="#16202d">
+<meta property="og:title" content="Astra Watch: know what's happening across your machines">
+<meta property="og:description" content="One private place for your computer's and server's health, resource use and alerts. Open source.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<div class="wrap">
-  <header class="top">
-    <a class="brand" href="#"><img src="assets/logo.svg" alt="" width="34" height="34"> Astra Watch</a>
-    <nav class="links" aria-label="Page sections">
-      <a href="#story">Why</a><a href="#features">Features</a><a href="#architecture">Architecture</a>
-      <a href="#stack">Stack</a><a href="#screenshots">Screenshots</a><a href="#security">Security</a>
-      <a href="https://github.com/ShivaSai06/astra-watch">GitHub</a>
+
+<header class="nav">
+  <div class="nav-in">
+    <a class="brand" href="#top" aria-label="Astra Watch, top of page"><img src="assets/logo.svg" alt="" width="30" height="30"><span>Astra Watch</span></a>
+    <nav aria-label="Page">
+      <a href="#how">How it works</a>
+      <a href="#helps">What it does</a>
+      <a href="#privacy">Privacy</a>
+      <a class="btn small" href="https://github.com/ShivaSai06/astra-watch">GitHub</a>
     </nav>
-  </header>
-</div>
+  </div>
+</header>
 
 <main id="main">
-<div class="wrap">
-  <div class="hero">
-    <div>
-      <div class="eyebrow">Open-source personal project</div>
-      <h1>See what's happening across your computers and servers.</h1>
-      <p class="lead">A single place to see what's happening across your computers and servers, understand problems, and take action when needed. Private, and nothing is stopped without your confirmation.</p>
-      <div class="btns">
+
+<!-- Hero -->
+<section class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <h1>Know what's happening across your machines.</h1>
+      <p class="lead">Astra Watch brings the health, resource use and alerts for your computer and your servers into one private place.</p>
+      <div class="actions">
         <a class="btn primary" href="https://github.com/ShivaSai06/astra-watch">View on GitHub</a>
-        <a class="btn" href="#story">Why I built it</a>
+        <a class="btn" href="#how">See how it works</a>
       </div>
-      <span class="badge">Not an enterprise platform: a real tool built for one developer's setup, free to fork and extend</span>
     </div>
-    <figure class="shot">
-      <img src="assets/screenshots/overview.png" width="1440" height="1250" alt="Astra Watch overview with a MacBook card and a Hetzner server card, each with CPU, memory and storage meters and a history graph.">
-      <figcaption>The real dashboard, shown with synthetic demo data.</figcaption>
+    <figure class="hero-vis loop" aria-label="Illustration: a laptop and a server report into one dashboard, which flags the laptop running low on memory and sends an alert.">
+      <svg viewBox="0 0 600 470" role="presentation" focusable="false">
+        <!-- laptop -->
+        <g transform="translate(40 14)">
+          <rect x="0" y="0" width="180" height="116" rx="10" class="dev"/>
+          <rect x="0" y="122" width="200" height="9" rx="4.5" class="dev-base" transform="translate(-10 0)"/>
+          <g class="screen-bars">
+            <rect class="sb sb1" x="26" y="30" width="22" height="64" rx="3"/>
+            <rect class="sb sb2" x="62" y="30" width="22" height="64" rx="3"/>
+            <rect class="sb sb3 hot" x="98" y="30" width="22" height="64" rx="3"/>
+            <rect class="sb sb4" x="134" y="30" width="22" height="64" rx="3"/>
+          </g>
+          <text x="90" y="158" text-anchor="middle" class="dlabel">MacBook</text>
+        </g>
+        <!-- server -->
+        <g transform="translate(380 14)">
+          <g class="srv">
+            <rect x="0" y="0" width="180" height="36" rx="8" class="dev"/><circle class="led l1" cx="22" cy="18" r="4"/><rect x="44" y="14" width="70" height="8" rx="4" class="slot"/>
+            <rect x="0" y="44" width="180" height="36" rx="8" class="dev"/><circle class="led l2" cx="22" cy="62" r="4"/><rect x="44" y="58" width="70" height="8" rx="4" class="slot"/>
+            <rect x="0" y="88" width="180" height="36" rx="8" class="dev"/><circle class="led l3" cx="22" cy="106" r="4"/><rect x="44" y="102" width="70" height="8" rx="4" class="slot"/>
+          </g>
+          <text x="90" y="158" text-anchor="middle" class="dlabel">Linux server</text>
+        </g>
+        <!-- links -->
+        <path class="flow" d="M130 176 C130 212 200 214 200 250"/>
+        <path class="flow f2" d="M470 176 C470 212 400 214 400 250"/>
+        <!-- one place -->
+        <rect x="40" y="250" width="520" height="200" rx="16" class="panel"/>
+        <g transform="translate(64 270)"><path d="M12 3 3 8v8l9 5 9-5V8zM12 12 3 8M12 12l9-4M12 12v9" class="pl" transform="scale(1)"/><circle cx="12" cy="12" r="2" fill="var(--good)"/></g>
+        <text x="96" y="290" class="ptitle">Astra Watch</text>
+        <text x="536" y="290" text-anchor="end" class="pnote">Example with made-up data</text>
+        <line x1="40" y1="306" x2="560" y2="306" class="rule"/>
+        <!-- row mac -->
+        <text x="64" y="340" class="rname">MacBook</text>
+        <text x="64" y="360" class="rsub">Memory</text>
+        <rect x="190" y="342" width="220" height="10" rx="5" class="track"/>
+        <rect x="190" y="342" width="220" height="10" rx="5" class="fillbar mbar"/>
+        <g class="chip chip-ok"><rect x="432" y="328" width="104" height="30" rx="15"/><text x="484" y="348" text-anchor="middle">Healthy</text></g>
+        <g class="chip chip-warn"><rect x="416" y="328" width="120" height="30" rx="15"/><text x="476" y="348" text-anchor="middle">Needs attention</text></g>
+        <!-- row server -->
+        <text x="64" y="396" class="rname">Linux server</text>
+        <text x="64" y="416" class="rsub">Processor</text>
+        <rect x="190" y="398" width="220" height="10" rx="5" class="track"/>
+        <rect x="190" y="398" width="220" height="10" rx="5" class="fillbar sbar"/>
+        <g class="chip chip-ok static"><rect x="432" y="384" width="104" height="30" rx="15"/><text x="484" y="404" text-anchor="middle">Healthy</text></g>
+        <!-- alert -->
+        <g class="alert"><circle cx="72" cy="436" r="4" class="adot"/><text x="86" y="440" class="atext">Telegram: your MacBook is running low on memory</text></g>
+      </svg>
+      <figcaption>Example with made-up data.</figcaption>
     </figure>
   </div>
-</div>
+</section>
 
-<section id="story">
-  <div class="wrap story">
-    <h2>Why I built Astra Watch</h2>
-    <p>I develop on a MacBook, and I rent a small server that runs several applications for me.</p>
-    <p>When something got slow, I never knew where to look. Was my laptop out of memory? Which program was using it? Was the server struggling, or was one of its apps misbehaving? Had one of the machines simply stopped reporting? Answering that meant checking different tools, and for the server it meant logging in and typing commands, every time.</p>
-    <p>I wanted one page that could tell me what was going on, warn me when something needed attention, and let me decide what to do about it. So I built it.</p>
-    <p>It is a personal project that solves a problem I actually had. Other developers and self-hosters are welcome to read it, learn from it and extend it.</p>
+<!-- Problem -->
+<section class="problem" id="problem">
+  <div class="wrap">
+    <h2>When something gets slow, where do you even look?</h2>
+    <div class="windows loop" aria-hidden="true">
+      <div class="win w1"><div class="wt">Laptop: running programs</div>
+        <div class="line"><span>Editor</span><b style="--w:32%"></b></div>
+        <div class="line"><span>Browser</span><b style="--w:48%"></b></div>
+        <div class="line"><span>Build</span><b class="hot" style="--w:86%"></b></div></div>
+      <div class="win w2"><div class="wt">Terminal: connect to the server</div>
+        <pre>$ ssh my-server
+$ top
+$ docker ps</pre></div>
+      <div class="win w3"><div class="wt">Server: its apps</div>
+        <div class="line"><i class="dot good"></i><span>web</span></div>
+        <div class="line"><i class="dot good"></i><span>database</span></div>
+        <div class="line"><i class="dot warn"></i><span>worker</span></div></div>
+      <div class="win w4"><div class="wt">Disk space</div>
+        <div class="line"><span>Laptop</span><b style="--w:67%"></b></div>
+        <div class="line"><span>Server</span><b style="--w:41%"></b></div></div>
+      <div class="win w5"><div class="wt">Is anything even reporting?</div>
+        <div class="ping">No reply yet<span class="dots"></span></div></div>
+    </div>
+    <p class="closer">Five places to check, and you still haven't found the cause.</p>
   </div>
 </section>
 
-<section id="features">
+<!-- How it works -->
+<section class="how" id="how">
   <div class="wrap">
-    <h2>What it does</h2>
-    <p class="intro">Everything below is implemented and in daily use on my own machines.</p>
-    <div class="grid">
-      <div class="card"><h3>Multi-device monitoring</h3><p>A MacBook (through a small agent) and a Linux server (collected locally), side by side. Each shows Connected, Stale or Offline, with a last-seen time.</p></div>
-      <div class="card"><h3>CPU and memory</h3><p>Current usage, load, memory pressure and 1-hour / 24-hour trend charts.</p></div>
-      <div class="card"><h3>Disk and swap</h3><p>Free space, how fast it is shrinking, and swap that keeps growing.</p></div>
-      <div class="card"><h3>Process visibility</h3><p>Top processes by CPU and memory. On the Mac, development workloads such as Node and test workers are grouped.</p></div>
-      <div class="card"><h3>Docker containers</h3><p>Status, health, restarts, CPU, memory, log size and Docker disk usage per container.</p></div>
-      <div class="card"><h3>Alerts and incident history</h3><p>Problems must last a few minutes before they alert, then show cause, impact and a suggested action. Recovered incidents are kept for 30 days.</p></div>
-      <div class="card"><h3>Telegram notifications</h3><p>One message per incident (no repeat spam), plus a "cleared" message when it recovers.</p></div>
-      <div class="card"><h3>Private access with Tailscale</h3><p>Reachable only from my own tailnet, over HTTPS, limited to one identity. Funnel is off.</p></div>
-      <div class="card"><h3>Controlled stop actions</h3><p>A runaway container can be stopped only after an explicit confirmation. Nothing is stopped automatically.</p></div>
+    <h2>One place that collects, checks and tells you.</h2>
+    <p class="sub">Follow a measurement from your machines to your phone.</p>
+    <div class="how-grid">
+      <div class="steps" id="steps">
+        <div class="step" data-step="1"><span class="num">1</span><h3>Your laptop reports in</h3><p>A small program on your MacBook sends its numbers to Astra Watch every 30 seconds.</p></div>
+        <div class="step" data-step="2"><span class="num">2</span><h3>The server checks itself</h3><p>Astra Watch reads the server's own numbers and the state of its running apps directly.</p></div>
+        <div class="step" data-step="3"><span class="num">3</span><h3>Everything lands in one place</h3><p>It keeps the measurements and watches for trouble, such as memory staying too high for a few minutes.</p></div>
+        <div class="step" data-step="4"><span class="num">4</span><h3>You find out</h3><p>The problem appears on your private dashboard, and Telegram sends you a message.</p></div>
+        <div class="step" data-step="5"><span class="num">5</span><h3>You decide</h3><p>Astra Watch explains what it found. If you want to stop something, you confirm first. It never does it on its own.</p></div>
+      </div>
+      <div class="stage-wrap">
+        <div class="stage" id="stage" role="img" aria-label="Diagram. The MacBook's agent and the Linux server's own checks both feed Astra Watch, which stores the measurements and checks them. A problem goes to the private dashboard and to Telegram. You review it and confirm any action."></div>
+        <div class="dots-nav" id="dots" aria-hidden="true"></div>
+        <p class="stage-note">Illustration with made-up data.</p>
+      </div>
     </div>
   </div>
 </section>
 
-<section id="architecture">
+<!-- What it helps with -->
+<section class="helps" id="helps">
   <div class="wrap">
-    <h2>Architecture</h2>
-    <p class="intro">A small agent on the Mac sends metrics to a backend on the server. The same backend watches the server itself, stores 24 hours in SQLite, evaluates alerts and talks to Telegram. Tailscale is the only way in.</p>
-    <div class="diagram">
-      <svg viewBox="0 0 900 360" role="img" aria-labelledby="dt dd">
-        <title id="dt">Astra Watch architecture</title>
-        <desc id="dd">A Mac agent and a browser connect over Tailscale to Tailscale Serve on the server, which proxies to the FastAPI backend. The backend uses SQLite and Docker, and sends alerts to Telegram.</desc>
-        <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9aa7b3"/></marker></defs>
-        <rect class="priv" x="190" y="20" width="560" height="320" rx="16"/>
-        <text x="210" y="44" class="sub">Private Tailscale network (tailnet)</text>
-        <rect class="box" x="20" y="70" width="160" height="70" rx="10"/><text x="40" y="100">Mac agent</text><text x="40" y="120" class="sub">Python, launchd, Keychain</text>
-        <rect class="box" x="20" y="220" width="160" height="70" rx="10"/><text x="40" y="250">Browser</text><text x="40" y="270" class="sub">laptop or phone</text>
-        <rect class="box" x="230" y="145" width="170" height="70" rx="10"/><text x="250" y="175">Tailscale Serve</text><text x="250" y="195" class="sub">HTTPS, owner identity</text>
-        <rect class="box" x="450" y="70" width="170" height="70" rx="10"/><text x="470" y="100">Backend</text><text x="470" y="120" class="sub">FastAPI + rule engine</text>
-        <rect class="box" x="450" y="230" width="75" height="60" rx="10"/><text x="465" y="256">SQLite</text><text x="465" y="274" class="sub">24 h</text>
-        <rect class="box" x="545" y="230" width="75" height="60" rx="10"/><text x="560" y="256">Docker</text><text x="560" y="274" class="sub">stop on OK</text>
-        <rect class="box" x="780" y="70" width="100" height="70" rx="10"/><text x="800" y="100">Telegram</text><text x="800" y="120" class="sub">alerts</text>
-        <path class="arrow" d="M180 105 L230 165"/><path class="arrow" d="M180 255 L230 195"/>
-        <path class="arrow" d="M400 180 L450 120"/>
-        <path class="arrow" d="M500 140 L490 230"/><path class="arrow" d="M580 140 L585 230"/>
-        <path class="arrow" d="M620 105 L780 105"/>
-        <text x="40" y="330" class="sub">The Mac reports every 30 s. The server watches itself, independent of the Mac.</text>
-      </svg>
-    </div>
-    <div class="grid" style="margin-top:18px">
-      <div class="card"><h3>Mac agent</h3><p>Samples the Mac every 30 seconds and sends it to the backend with its own bearer token, stored in the macOS Keychain. launchd keeps it running.</p></div>
-      <div class="card"><h3>Hetzner backend</h3><p>Receives Mac data, reads <code>/proc</code> and Docker for the server's own metrics, runs the alert rules and serves the dashboard.</p></div>
-      <div class="card"><h3>SQLite</h3><p>One file with samples, snapshots and incidents. Anything older than 24 hours is deleted.</p></div>
-      <div class="card"><h3>Tailscale</h3><p>Makes the server reachable only from my devices, with an HTTPS certificate, and tells the backend who is asking.</p></div>
-      <div class="card"><h3>Telegram</h3><p>Receives alert messages and sends back Stop / Confirm taps, which the backend polls for.</p></div>
-    </div>
-    <p style="margin-top:18px">Read the details in the <a href="https://github.com/ShivaSai06/astra-watch/blob/main/docs/architecture.md">architecture document</a>.</p>
-  </div>
-</section>
-
-<section id="stack">
-  <div class="wrap">
-    <h2>Technology stack</h2>
-    <p class="intro">Deliberately small. Only what the project actually uses.</p>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Technology</th><th>Used for</th><th>Why</th></tr></thead>
-      <tbody>
-        <tr><td>Python 3.12, FastAPI, Uvicorn</td><td>Backend API, collection, rule engine</td><td>Easy to read <code>/proc</code>, typed validation, one light process</td></tr>
-        <tr><td>SQLite</td><td>Samples, incidents, audit log</td><td>No database server to run; plenty for 24 hours of two machines</td></tr>
-        <tr><td>Docker CLI</td><td>Container inspection, <code>docker stop</code></td><td>The server's workloads already run in Docker</td></tr>
-        <tr><td>Tailscale (Serve)</td><td>Private network, HTTPS, owner identity</td><td>Remote access without opening any public port</td></tr>
-        <tr><td>systemd user services</td><td>Run and restart the backend on the server</td><td>Resource limits, no root</td></tr>
-        <tr><td>launchd + macOS Keychain</td><td>Run the Mac agent, store its token</td><td>The native, supported way on macOS</td></tr>
-        <tr><td>Telegram Bot API</td><td>Alerts and confirmations</td><td>Push to my phone without building an app</td></tr>
-        <tr><td>React, TypeScript, Vite</td><td>The dashboard</td><td>Typed UI that builds to plain static files</td></tr>
-        <tr><td>pytest</td><td>Tests for rules, security and agents</td><td>Standard, fast</td></tr>
-      </tbody>
-    </table></div>
-    <p style="margin-top:14px">Full explanation: <a href="https://github.com/ShivaSai06/astra-watch/blob/main/docs/technology-stack.md">technology-stack.md</a>.</p>
-  </div>
-</section>
-
-<section id="screenshots">
-  <div class="wrap">
-    <h2>Screenshots</h2>
-    <p class="intro">Every screenshot here is the real application running on generated, synthetic data. No live machine, address or identity appears.</p>
-    <div class="shots">
-      <figure class="shot"><img loading="lazy" src="assets/screenshots/server.png" width="1440" height="1500" alt="Machine page with usage meters, history graphs and the largest resource users."><figcaption>Machine details: usage, history and what is using resources</figcaption></figure>
-      <figure class="shot"><img loading="lazy" src="assets/screenshots/overview-stale.png" width="1440" height="1250" alt="Overview where the MacBook card is marked Stale and greyed out."><figcaption>A silent MacBook is marked Stale and its old numbers are labelled "not current"</figcaption></figure>
-      <figure class="shot"><img loading="lazy" src="assets/screenshots/activity.png" width="1440" height="900" alt="Activity page listing active and recovered incidents."><figcaption>Activity: active and recovered incidents</figcaption></figure>
-      <figure class="shot"><img loading="lazy" src="assets/screenshots/automation.png" width="1440" height="1100" alt="Automation page showing what Astra Watch can do, what needs confirmation and what it cannot do."><figcaption>Automation: permissions and safety controls</figcaption></figure>
-      <figure class="shot"><img loading="lazy" src="assets/screenshots/settings.png" width="1440" height="1150" alt="Settings page showing private access, Telegram connection and notification settings."><figcaption>Settings: connections and notifications</figcaption></figure>
+    <h2>What it helps with</h2>
+    <div class="ledger loop">
+      <article>
+        <div class="vis v-machines" aria-hidden="true">
+          <div class="r"><i class="dot good"></i><span>MacBook</span><em>Healthy</em></div>
+          <div class="r"><i class="dot good"></i><span>Linux server</span><em>Healthy</em></div>
+        </div>
+        <div><h3>Every machine in one view</h3><p>Your laptop and your server, side by side, each with its own health.</p></div>
+      </article>
+      <article>
+        <div class="vis v-uses" aria-hidden="true">
+          <div class="u"><span>indexer</span><b style="--w:84%" class="hot"></b></div>
+          <div class="u"><span>database</span><b style="--w:36%"></b></div>
+          <div class="u"><span>web</span><b style="--w:12%"></b></div>
+        </div>
+        <div><h3>What is using your computer</h3><p>See which programs and apps take the most memory and processing power.</p></div>
+      </article>
+      <article>
+        <div class="vis v-early" aria-hidden="true">
+          <svg viewBox="0 0 200 84" focusable="false"><line x1="8" y1="30" x2="192" y2="30" class="thr"/><polyline class="ln" points="8,66 36,62 64,64 92,52 120,44 148,34 176,20 192,14"/><circle class="pt" cx="176" cy="20" r="4.5"/></svg>
+          <span class="cap">Limit</span>
+        </div>
+        <div><h3>Trouble, noticed early</h3><p>A machine running low is flagged once the problem lasts a few minutes, not on every spike.</p></div>
+      </article>
+      <article>
+        <div class="vis v-silent" aria-hidden="true">
+          <div class="s"><i class="dot"></i><span class="st a">Connected</span><span class="st b">Not current</span><span class="st c">Offline</span></div>
+          <div class="ls"><span class="a">Last report 8 seconds ago</span><span class="b">Last report 5 minutes ago</span><span class="c">Last report 20 minutes ago</span></div>
+        </div>
+        <div><h3>Silence is shown as silence</h3><p>If a machine stops reporting, Astra Watch says so instead of showing old numbers as current.</p></div>
+      </article>
+      <article>
+        <div class="vis v-notify" aria-hidden="true">
+          <div class="bub b1">MacBook is low on memory</div>
+          <div class="bub b2">Back to normal</div>
+        </div>
+        <div><h3>A message when it matters</h3><p>Telegram tells you when a problem starts, and again when it clears.</p></div>
+      </article>
+      <article>
+        <div class="vis v-control" aria-hidden="true">
+          <div class="c"><span>indexer</span><span class="btnmock"><i class="t1">Stop</i><i class="t2">Confirm stop</i></span></div>
+          <div class="c"><span>photos</span><em>Protected</em></div>
+        </div>
+        <div><h3>You stay in control</h3><p>Stopping anything needs your confirmation, and some services can never be stopped from here.</p></div>
+      </article>
     </div>
   </div>
 </section>
 
-<section id="security">
+<!-- Privacy -->
+<section class="privacy" id="privacy">
   <div class="wrap">
-    <h2>Security and privacy</h2>
-    <p class="intro">The real Astra Watch dashboard is private. This page is a separate static site and does not talk to it.</p>
-    <div class="grid">
-      <div class="card"><h3>Not on the public internet</h3><p>The live dashboard is only reachable from my own Tailscale network. <strong>Tailscale Funnel is disabled</strong> and the backend listens on localhost only.</p></div>
-      <div class="card"><h3>Private access plus a login check</h3><p>Being on the tailnet is not enough: the backend also requires the one authorised Tailscale identity, and CSRF tokens for changes.</p></div>
-      <div class="card"><h3>Separate credentials</h3><p>The Mac agent has its own revocable token (only its hash is stored on the server). Telegram is limited to my user and chat id.</p></div>
-      <div class="card"><h3>Stop needs confirmation</h3><p>Stopping a container is a two-step, single-use, time-limited approval for that exact target. Only <code>docker stop</code> is allowed.</p></div>
+    <h2>Private, and in your control.</h2>
+    <div class="trio">
+      <div>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 11V8a6 6 0 0 1 12 0v3M5 11h14v10H5z"/></svg>
+        <h3>Only you can open it</h3>
+        <p>The dashboard is reachable only from your own devices, through Tailscale. It is never on the public internet.</p>
+      </div>
+      <div>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 3 2 11l7 2.5L11.5 21 14 15l6 4z"/></svg>
+        <h3>Alerts go to your Telegram</h3>
+        <p>You get a message when something needs attention, and another when it is back to normal.</p>
+      </div>
+      <div>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z M9 12l2 2 4-4"/></svg>
+        <h3>It never acts on its own</h3>
+        <p>Astra Watch explains the problem and waits. Stopping something always needs your confirmation.</p>
+      </div>
     </div>
-    <p style="margin-top:18px">More in <a href="https://github.com/ShivaSai06/astra-watch/blob/main/docs/security.md">security.md</a>.</p>
   </div>
 </section>
 
-<section id="status">
-  <div class="wrap">
-    <h2>Status and limitations</h2>
-    <div class="grid">
-      <div class="card"><h3 class="ok">Working</h3><p>Two-machine monitoring, Docker visibility, alerts, Telegram, Tailscale access, controlled stop, 24-hour retention, one-command deploy with automatic rollback.</p></div>
-      <div class="card"><h3 class="no">Limitations</h3><p>Exactly two machines (a Mac and one Linux server), one owner, 24 hours of history, and it cannot alert you if the server itself is off.</p></div>
+<!-- About -->
+<section class="about" id="about">
+  <div class="wrap about-in">
+    <h2>I built it because I was tired of hunting for the cause.</h2>
+    <p>I develop on a MacBook and run my apps on a remote Linux server. Every time something got slow I opened one tool after another, logged in to the server and typed commands. I wanted one page that would just tell me what was going on.</p>
+    <p>Astra Watch is a personal, open-source project made for my own setup. If it is useful to you, take it, read it and change it.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/ShivaSai06/astra-watch">View the project on GitHub</a>
+      <a class="btn" href="https://github.com/ShivaSai06/astra-watch/tree/main/docs">Read the technical notes</a>
     </div>
   </div>
 </section>
 </main>
 
-<footer>
-  <div class="wrap row">
-    <div>
-      <strong>Astra Watch</strong><br>
-      A personal project by <a href="https://github.com/ShivaSai06">ShivaSai06</a>. Status: working, in daily personal use.
-    </div>
-    <div>
-      <a href="https://github.com/ShivaSai06/astra-watch">GitHub repository</a> ·
-      <a href="https://github.com/ShivaSai06/astra-watch/blob/main/LICENSE">MIT license</a>
-    </div>
+<footer class="foot">
+  <div class="wrap foot-in">
+    <span>Astra Watch · MIT licence</span>
+    <span>Visuals on this page are illustrations with made-up data. The real dashboard is private.</span>
   </div>
 </footer>
+<script src="main.js"></script>
 </body>
 </html>

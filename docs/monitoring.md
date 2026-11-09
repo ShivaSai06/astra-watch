@@ -62,7 +62,7 @@ Before this was documented, a single setting (`refresh_interval`) was labelled "
 
 ## Healthy is not the same as reporting
 
-Astra Watch tracks two separate questions. **Health** asks whether the numbers it has are good. **Connection** asks whether those numbers are recent. A machine can be perfectly healthy and still *Stale*, for example a sleeping MacBook whose last report looked fine. A machine can also be *Connected* and unhealthy. The dashboard never merges the two: stale values are greyed and labelled "not current" (see the screenshot in the [README](../README.md)), and silence is never presented as "all good".
+Astra Watch tracks two separate questions. **Health** asks whether the numbers it has are good. **Connection** asks whether those numbers are recent. A machine can be perfectly healthy and still *Stale*, for example a sleeping MacBook whose last report looked fine. A machine can also be *Connected* and unhealthy. The dashboard never merges the two: stale values are greyed and labelled "not current", and silence is never presented as "all good".
 
 ## Device status: Connected, Stale, Offline
 

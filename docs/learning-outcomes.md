@@ -21,7 +21,7 @@ Astra Watch is small enough to read end to end, but it contains real versions of
 
 ## Suggested reading order
 
-1. [README](../README.md) and the screenshots, to see the product.
+1. The [landing page](https://shivasai06.github.io/astra-watch/), to see the product.
 2. [architecture.md](architecture.md), following one metric from the Mac to a graph.
 3. `engine.py` and [monitoring.md](monitoring.md), to see how numbers become incidents.
 4. [security.md](security.md) with `security.py` and `actions.py`.
