@@ -21,6 +21,12 @@ import time
 from pathlib import Path
 
 os.environ["WATCHER_NO_LOOPS"] = "1"
+# Isolation: the demo must never pick up a real installation through the environment. Drop every setting that
+# could point the app at real config, data or credentials; the demo's own temp directory is set in main().
+for _k in ("WATCHER_HOME", "WATCHER_CONFIG_DIR", "WATCHER_DATA_DIR", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
+           "TELEGRAM_USER_ID", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_MODE", "TAILSCALE_OWNER_LOGIN", "APPROVAL_HMAC_KEY",
+           "HEARTBEAT_URL"):
+    os.environ.pop(_k, None)
 os.environ.setdefault("WATCHER_STATIC_DIR", str(Path(__file__).resolve().parents[1] / "frontend" / "dist"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
@@ -139,7 +145,9 @@ def main():
     ap.add_argument("--mac", choices=["connected", "stale", "offline"], default="connected")
     a = ap.parse_args()
     tmp = Path(tempfile.mkdtemp(prefix="astra-demo-"))
+    os.environ["WATCHER_CONFIG_DIR"], os.environ["WATCHER_DATA_DIR"] = str(tmp / "config"), str(tmp / "data")
     paths = Paths(str(tmp)); paths.ensure()
+    assert str(paths.db).startswith(str(tmp)) and str(paths.secrets).startswith(str(tmp)), "demo must only use its temp dir"
     # Placeholder Telegram values only make Settings show "configured"; the network call is stubbed below.
     save_env_file(paths.secrets, {"TAILSCALE_OWNER_LOGIN": DEMO_LOGIN, "TELEGRAM_BOT_TOKEN": "0:DEMO-PLACEHOLDER",
                                   "TELEGRAM_CHAT_ID": "0", "TELEGRAM_USER_ID": "0", "TELEGRAM_MODE": "polling"})

@@ -2,7 +2,7 @@
 
 Every image here is a real render of the dashboard, taken in headless Chrome at 1440 px wide against `scripts/demo_server.py`.
 
-The demo server uses **synthetic data only**: it creates a throw-away database in a temporary directory, generates fictional machines (`MacBook Air`, `Hetzner server`, containers named `demo-*`), uses a fake login (`demo@example.com`), stubs the Telegram call, and runs no collection loops. It never reads production data or contacts any real machine.
+The demo server uses **synthetic data only**: it creates a throw-away database in a temporary directory, generates fictional machines (`MacBook Air`, `Hetzner server`, containers named `demo-*`), uses a fake login (`demo@example.com`), stubs the Telegram call, and runs no collection loops. It also ignores `WATCHER_*`, `TELEGRAM_*` and similar environment variables and asserts that its database and secrets live in its temp directory, so a real installation cannot leak in. It never reads production data or contacts any real machine.
 
 Regenerate (after `npm run build` in `frontend/`):
 
