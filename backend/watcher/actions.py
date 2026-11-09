@@ -121,10 +121,12 @@ def _bind(key: bytes, row: dict) -> str:
 
 
 class Actions:
-    def __init__(self, db: DB, hmac_key_fn, hub: MacHub):
+    def __init__(self, db: DB, hmac_key_fn, hub: MacHub, mode_fn=None, protected_fn=None):
         self.db = db
         self._key = hmac_key_fn
         self.hub = hub
+        self.mode_fn = mode_fn                  # () -> 'explain'|'assisted'  (automation policy)
+        self.protected_fn = protected_fn        # (container name) -> bool     (automation policy deny list)
 
     # ------------------------------------------------------------ offers
     def create_offer(self, incident_id: str, machine: str, kind: str, target: dict, label: str) -> str:
@@ -145,6 +147,9 @@ class Actions:
     async def prepare(self, machine: str, kind: str, ref: dict, source: str, actor: str,
                       chat_id: str | None = None) -> dict:
         """Look the target up server-side (never trust client-supplied identity), then mint an approval."""
+        if self.mode_fn and self.mode_fn() == "explain":
+            raise ActionError("unauthorized", "Automation is set to Explain mode: Astra Watch only recommends. "
+                                              "Change it on the server with watcherctl automation-mode.")
         if machine == "hetzner" and kind == "container":
             target, details = await asyncio.to_thread(self._hetzner_target, ref.get("id", ""))
         elif machine == "mac" and kind in ("process", "container"):
@@ -193,6 +198,8 @@ class Actions:
             impact.append("Restart policy is 'always': Docker will start it again if the Docker service restarts.")
         elif c["restart_policy"] == "unless-stopped":
             impact.append("Restart policy is 'unless-stopped': it stays stopped until you start it yourself.")
+        if self.protected_fn and self.protected_fn(c["name"]):
+            impact.append("Protected service: Astra Watch will never stop it on its own. This stop only happens because you confirm it.")
         details = {"name": c["name"], "id": c["id"], "short": c["short"], "image": c["image"], "status": c["status"],
                    "health": c["health"], "restart_policy": c["restart_policy"], "ports": c["ports"],
                    "volumes": vols, "project": c["project"], "dependents": dependents, "impact": impact}
@@ -275,7 +282,21 @@ class Actions:
             self.db.execute("UPDATE approvals SET result=?, finished=? WHERE id=?", (json.dumps(res), res["ts"], row["id"]))
         tname = ((row or {}).get("target") or {}).get("name") or str(((row or {}).get("target") or {}).get("pid"))
         self.db.audit(actor, "stop.execute", (row or {}).get("machine"), tname, status, message)
+        if row:
+            self._record_events(row, status, message, tname)
         return res
+
+    def _record_events(self, row: dict, status: str, message: str | None, tname: str) -> None:
+        """Attach the human-approved action and its verification to the incident that offered it."""
+        t = row.get("target") or {}
+        for inc in self.db.query("SELECT id,targets FROM incidents WHERE state='active' AND machine=?", (row["machine"],)):
+            for tg_ in json.loads(inc["targets"] or "[]"):
+                ref = tg_.get("ref") or {}
+                if (ref.get("id") and ref.get("id") == t.get("id")) or (ref.get("pid") and ref.get("pid") == t.get("pid")):
+                    self.db.event(inc["id"], "action", f"You approved stopping {tname}")
+                    self.db.event(inc["id"], "action_verified" if status == "stopped" else "action_failed",
+                                  (message or status)[:300])
+                    return
 
     async def _stop_hetzner(self, t: dict) -> dict:
         try:

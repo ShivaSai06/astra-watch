@@ -58,17 +58,27 @@ CREATE TABLE IF NOT EXISTS notifications (
   status TEXT NOT NULL, detail TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_notif ON notifications(ts);
+CREATE TABLE IF NOT EXISTS incident_events (
+  id INTEGER PRIMARY KEY, ts REAL NOT NULL, incident_id TEXT NOT NULL, machine TEXT, rule TEXT, severity TEXT,
+  title TEXT, kind TEXT NOT NULL, detail TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_ev_inc ON incident_events(incident_id, ts);
+CREATE INDEX IF NOT EXISTS ix_ev_ts ON incident_events(ts);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS logs (
   id INTEGER PRIMARY KEY, ts REAL NOT NULL, level TEXT, msg TEXT
 );
 """
 
-# table -> timestamp column used for retention
+# Raw metrics and short-lived working data: 24 h hard cap (prune()).
 RETENTION_COLUMNS = {
-    "samples": "ts", "snapshots": "ts", "audit": "ts", "notifications": "ts", "logs": "ts",
+    "samples": "ts", "snapshots": "ts", "notifications": "ts", "logs": "ts",
     "offers": "created", "approvals": "created",
 }
+# Incident history and the action audit trail: 30 days (prune_history()). Kept apart from the metric
+# retention above so changing one can never change the other.
+HISTORY_RETENTION_DAYS = 30
+HISTORY_COLUMNS = {"incident_events": "ts", "audit": "ts"}
 
 
 class DB:
@@ -141,6 +151,24 @@ class DB:
             self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self.kv_set("last_prune", {"ts": time.time(), "hours": hours, "removed": removed})
         return removed
+
+    def prune_history(self, days: float = HISTORY_RETENTION_DAYS, now: float | None = None) -> dict[str, int]:
+        """Delete incident events and audit rows older than `days` (capped at 30). Metrics are not touched."""
+        days = min(float(days), float(HISTORY_RETENTION_DAYS))
+        cutoff = (now or time.time()) - days * 86400
+        with self._lock:
+            return {t: self.conn.execute(f"DELETE FROM {t} WHERE {c} < ?", (cutoff,)).rowcount
+                    for t, c in HISTORY_COLUMNS.items()}
+
+    def event(self, incident_id: str, kind: str, detail: str = "", *, machine=None, rule=None, severity=None,
+              title=None, ts: float | None = None) -> None:
+        """Append one lifecycle event. Rows carry the incident's name so history outlives the 24 h incident row."""
+        if machine is None:
+            r = self.one("SELECT machine,rule,severity,title FROM incidents WHERE id=?", (incident_id,))
+            if r:
+                machine, rule, severity, title = r["machine"], r["rule"], r["severity"], r["title"]
+        self.execute("INSERT INTO incident_events(ts,incident_id,machine,rule,severity,title,kind,detail) VALUES(?,?,?,?,?,?,?,?)",
+                     (ts or time.time(), incident_id, machine, rule, severity, title, kind, (detail or "")[:500]))
 
     def oldest_record(self) -> float | None:
         vals = []

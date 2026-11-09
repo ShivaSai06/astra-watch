@@ -11,6 +11,7 @@ import hmac
 import json
 import time
 
+from . import explain
 from . import telegram as tg
 from .actions import RESULTS, ActionError, Actions
 from .db import DB
@@ -68,10 +69,16 @@ class Notifier:
                     self.db.execute("UPDATE incidents SET recovery_notified=2 WHERE id=?", (inc["id"],))
                     continue
                 try:
-                    text = tg.recovery_message(inc, self.base_url(), (inc["recovered_at"] or now) - (inc["active_since"] or now))
+                    acts = [r["detail"].replace("You approved ", "").strip() for r in self.db.query(
+                        "SELECT detail FROM incident_events WHERE incident_id=? AND kind='action'", (inc["id"],))]
+                    sample = self.db.one("SELECT * FROM samples WHERE machine=? ORDER BY ts DESC LIMIT 1", (inc["machine"],))
+                    improved = explain.recovery_facts(inc, dict(sample) if sample else None)
+                    text = tg.recovery_message(inc, self.base_url(), (inc["recovered_at"] or now) - (inc["active_since"] or now),
+                                               improved, acts)
                     await asyncio.to_thread(self.tg.send, text)
                     self.db.execute("UPDATE incidents SET recovery_notified=1 WHERE id=?", (inc["id"],))
                     self._log(inc["id"], "recovery", "sent")
+                    self.db.event(inc["id"], "notified", "Recovery message sent", ts=now)
                 except tg.TelegramError as e:
                     self._log(inc["id"], "recovery", "failed", str(e))
                     if now - (inc["recovered_at"] or now) > 3600:
@@ -82,7 +89,8 @@ class Notifier:
         for t in inc["targets"][:3]:
             oid = self.actions.create_offer(inc["id"], inc["machine"], t["kind"], t["ref"], tg.clean(t["label"], 50))
             offers.append({"id": oid, "label": tg.clean(t["label"], 50)})
-        text = tg.alert_message(inc, self.base_url(), escalated)
+        ex = explain.explain(inc, now)
+        text = tg.alert_message(inc, self.base_url(), escalated, ex)
         buttons = tg.buttons_for(inc, offers, self.base_url())
         try:
             await asyncio.to_thread(self.tg.send, text, buttons)
@@ -96,6 +104,7 @@ class Notifier:
         self.db.execute("UPDATE incidents SET notify_state='sent', notified_at=?, notified_severity=?, notify_error=NULL, "
                         "next_attempt=NULL WHERE id=?", (now, inc["severity"], inc["id"]))
         self._log(inc["id"], "escalation" if escalated else "alert", "sent")
+        self.db.event(inc["id"], "notified", "Telegram message sent" + (" (escalation)" if escalated else ""), ts=now)
 
     # ------------------------------------------------------------------ inbound bot traffic
     def authorised(self, user_id, chat_id, chat_type="private") -> bool:
@@ -119,17 +128,17 @@ class Notifier:
                 await asyncio.to_thread(self.tg.send, self._status_text())
             elif text.startswith("/start") or text.startswith("/help"):
                 await asyncio.to_thread(
-                    self.tg.send, "<b>PERSONAL INFRASTRUCTURE WATCHER</b>\n\nI send alerts here. Tap Stop on an alert to "
+                    self.tg.send, "<b>ASTRA WATCH</b>\n\nI send alerts here. Tap Stop on an alert to "
                                   "start a two-step confirmation. Commands: /status")
 
     def _status_text(self) -> str:
         rows = self.db.query("SELECT * FROM incidents WHERE state='active' ORDER BY severity DESC, first_seen")
         if not rows:
-            return "<b>PERSONAL INFRASTRUCTURE WATCHER</b>\n\n🟢 No active problems.\n" + self.base_url()
-        lines = ["<b>PERSONAL INFRASTRUCTURE WATCHER</b>", "", f"{len(rows)} active problem(s):"]
+            return "<b>ASTRA WATCH</b>\n\n🟢 No active problems.\n" + self.base_url()
+        lines = ["<b>ASTRA WATCH</b>", "", f"{len(rows)} active problem(s):"]
         for r in rows[:8]:
-            lines.append(f"• {r['severity'].upper()} {tg.MACHINE_LABEL.get(r['machine'], r['machine'])}: {tg.E(r['title'])}")
-        lines += ["", self.base_url() + "/#/alerts"]
+            lines.append(f"• {tg.SEV_WORD.get(r['severity'], r['severity'])} · {tg.MACHINE_LABEL.get(r['machine'], r['machine'])}: {tg.E(r['title'])}")
+        lines += ["", self.base_url() + "/#/activity"]
         return "\n".join(lines)
 
     async def _callback(self, cq: dict) -> None:

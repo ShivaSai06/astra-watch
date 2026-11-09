@@ -22,11 +22,15 @@ from .actions import Actions, ActionError, MacHub
 from .collect_linux import LinuxCollector, parse_stat_line
 from .config import Paths, Secrets, Settings
 from .db import DB
+from .automation import Automation, is_denied
 from .engine import Engine
+from .heartbeat import Heartbeat
+from . import views
 from .notify import Notifier, webhook_secret_ok
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 MAX_BODY = 512 * 1024
+HISTORY_DAYS = 30
 
 
 # ------------------------------------------------------------------ agent payload models
@@ -111,10 +115,13 @@ class State:
         self.db = DB(paths.db)
         self.hub = MacHub()
         k = self.secrets.hmac_key()
-        self.actions = Actions(self.db, lambda: k, self.hub)
+        self.automation = Automation(self.db, self.settings.get, paths.automation)
+        self.actions = Actions(self.db, lambda: k, self.hub, mode_fn=self.automation.mode,
+                               protected_fn=lambda n: is_denied(n, self.automation.policy()[0]))
         self.tg = tg.Telegram(self.secrets)
         self.notifier = Notifier(self.db, self.settings, self.secrets, self.tg, self.actions)
         self.engine = Engine(self.db, self.settings, self.hub)
+        self.heartbeat = Heartbeat(self.secrets, self.engine, lambda: self.settings.get()["refresh_interval"])
         self.agents = security.AgentRegistry(paths)
         self.limiter = security.RateLimiter()
         self.collector = LinuxCollector()
@@ -131,6 +138,8 @@ def create_app(paths: Paths | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         st.db.prune(st.settings.get()["retention_hours"])            # enforce on every start
+        st.db.prune_history()                                        # 30-day incident events + audit (separate from metrics)
+        backfill_events(st)
         if not os.environ.get("WATCHER_NO_LOOPS"):          # tests drive the engine directly
             st.tasks = [asyncio.create_task(_guard(st, collect_loop, "collect")),
                         asyncio.create_task(_guard(st, maintenance_loop, "maintenance")),
@@ -269,7 +278,19 @@ def create_app(paths: Paths | None = None) -> FastAPI:
     @app.get("/api/overview")
     async def overview(_: str = Depends(owner)):
         # Reads cached rows from SQLite only. It never triggers a collection, a Docker call or a process scan.
-        return {m: machine_summary(st, m) for m in ("mac", "hetzner")} | {
+        sums = {m: machine_summary(st, m) for m in ("mac", "hetzner")}
+        att = views.attention(st.db, time.time())
+        lv = [sums[m]["status"]["level"] for m in sums]
+        counts = {"machines": len(sums), "healthy": lv.count("good"),
+                  "need_attention": sum(1 for l in lv if l in ("attention", "critical")),
+                  "not_reporting": sum(1 for l in lv if l in ("offline", "unknown")),
+                  "critical_incidents": sum(1 for a in att if a["severity"] == "critical"),
+                  "active_incidents": len(att),
+                  "last_report": max([sums[m]["last_seen"] for m in sums if sums[m]["last_seen"]], default=None)}
+        return sums | {
+            "overall": views.overall({m: sums[m]["status"] for m in sums}, att, counts),
+            "recent": views.activity_list(st.db, 12),
+            "attention": att,
             "retention": retention_info(st), "server_time": time.time(),
             "dashboard_refresh_seconds": st.settings.get()["dashboard_refresh_seconds"]}
 
@@ -291,9 +312,9 @@ def create_app(paths: Paths | None = None) -> FastAPI:
 
     @app.get("/api/history")
     async def history(machine: str, range: str = "1h", _: str = Depends(owner)):
-        if machine not in ("mac", "hetzner") or range not in ("1h", "24h"):
+        if machine not in ("mac", "hetzner") or range not in ("1h", "6h", "24h"):
             raise HTTPException(400, "bad parameters")
-        secs = {"1h": 3600, "24h": 86400}[range]
+        secs = {"1h": 3600, "6h": 21600, "24h": 86400}[range]
         now = time.time()
         bucket = max(secs / 180, 10)
         rows = st.db.query(
@@ -301,7 +322,10 @@ def create_app(paths: Paths | None = None) -> FastAPI:
             " AVG(disk_free) AS disk_free, AVG(disk_total) AS disk_total, AVG(json_extract(extra,'$.containers')) AS containers,"
             " AVG(load1) AS load1 FROM samples WHERE machine=? AND ts>=? GROUP BY b ORDER BY b",
             (now - secs, bucket, machine, now - secs))
-        return {"range": range, "points": [dict(r) for r in rows]}
+        first = st.db.one("SELECT MIN(ts) m FROM samples WHERE machine=? AND ts>=?", (machine, now - secs))["m"]
+        # Only this machine's own samples are ever returned. `available_seconds` says how much of the range really exists.
+        return {"machine": machine, "range": range, "points": [dict(r) for r in rows],
+                "available_seconds": None if first is None else round(now - first)}
 
     @app.get("/api/alerts")
     async def alerts(state: str = "all", _: str = Depends(owner)):
@@ -318,10 +342,31 @@ def create_app(paths: Paths | None = None) -> FastAPI:
             out.append(d)
         return {"alerts": out}
 
+    @app.get("/api/activity")
+    async def activity(_: str = Depends(owner)):
+        return {"items": views.activity_list(st.db, 100), "history_days": HISTORY_DAYS}
+
+    @app.get("/api/activity/{incident_id}")
+    async def activity_one(incident_id: str, _: str = Depends(owner)):
+        d = views.activity_detail(st.db, incident_id[:40], time.time())
+        if not d:
+            raise HTTPException(404, "Unknown incident")
+        return d
+
+    @app.get("/api/automation")
+    async def automation(_: str = Depends(owner)):
+        # Read-only by design: the policy is edited with `watcherctl automation-*` on the server.
+        sim = st.automation.simulate()
+        hist = [dict(r) for r in st.db.query(
+            "SELECT ts,actor,action,machine,target,outcome,detail FROM audit WHERE action LIKE 'stop.%' OR action LIKE 'dry_run.%' "
+            "ORDER BY ts DESC LIMIT 100")]
+        last = next((h for h in hist if h["action"] == "stop.execute" and h["outcome"] == "stopped"), None)
+        return sim | {"history": hist, "last_action": last, "history_days": HISTORY_DAYS, "editable_here": False}
+
     @app.get("/api/audit")
     async def audit(_: str = Depends(owner)):
         return {"actions": [dict(r) for r in st.db.query(
-            "SELECT * FROM audit WHERE action LIKE 'stop.%' OR action LIKE 'telegram.%' ORDER BY ts DESC LIMIT 100")],
+            "SELECT * FROM audit WHERE action LIKE 'stop.%' OR action LIKE 'telegram.%' ORDER BY ts DESC LIMIT 200")],
             "notifications": [dict(r) for r in st.db.query("SELECT * FROM notifications ORDER BY ts DESC LIMIT 50")]}
 
     @app.get("/api/settings")
@@ -345,7 +390,7 @@ def create_app(paths: Paths | None = None) -> FastAPI:
             return {"ok": False, "error": "Telegram is not configured. Run: watcherctl setup-telegram"}
         try:
             await asyncio.to_thread(
-                st.tg.send, "<b>PERSONAL INFRASTRUCTURE WATCHER</b>\n\n✅ Test notification.\nTelegram is connected.\n\n"
+                st.tg.send, "<b>ASTRA WATCH</b>\n\n✅ Test notification.\nTelegram is connected.\n\n"
                             f"{st.settings.get()['public_url']}")
             st.db.execute("INSERT INTO notifications(ts,incident_id,kind,status,detail) VALUES(?,?,?,?,?)",
                           (time.time(), None, "test", "sent", ""))
@@ -420,14 +465,8 @@ def machine_summary(st: State, machine: str) -> dict:
         offline_after = 5 * grace
     conn = connection_state(None if last is None else now - last, grace, offline_after)
     state = st.db.kv_get("mac_agent_state", {}) if machine == "mac" else {}
-    if conn in ("unknown", "stale", "offline"):
-        health = conn                       # old metrics are never shown as "healthy"
-    elif any(i["severity"] == "critical" for i in incs):
-        health = "critical"
-    elif incs:
-        health = "warning"
-    else:
-        health = "healthy"
+    status = views.machine_status(st.db, machine, conn, now)     # the single source of truth for health
+    health = {"good": "healthy", "attention": "warning", "critical": "critical", "offline": "offline"}.get(status["level"], "stale" if conn == "stale" else "unknown")
     cont = st.engine.snap(machine, "containers", max_age=900)
     return {
         "machine": machine, "health": health, "connection": conn, "last_update": s["ts"] if s else None,
@@ -439,6 +478,9 @@ def machine_summary(st: State, machine: str) -> dict:
         "disk_free": s["disk_free"] if s else None, "disk_total": s["disk_total"] if s else None,
         "containers": len([c for c in cont["list"] if c.get("running")]) if cont else None,
         "alerts": [dict(i) for i in incs],
+        "status": status,
+        "resources": views.resource_lines(machine, s, t, views.active_incidents(st.db, machine)),
+        "unhealthy_containers": len([c for c in cont["list"] if c.get("running") and c.get("health") == "unhealthy"]) if cont else None,
         "agent": ({"host": state.get("host"), "version": state.get("version"), "clean_stop": state.get("clean_stop")}
                   if machine == "mac" else None),
     }
@@ -446,7 +488,7 @@ def machine_summary(st: State, machine: str) -> dict:
 
 def retention_info(st: State) -> dict:
     oldest = st.db.oldest_record()
-    return {"hours": st.settings.get()["retention_hours"], "max_hours": 24, "oldest": oldest,
+    return {"hours": st.settings.get()["retention_hours"], "max_hours": 24, "oldest": oldest, "history_days": HISTORY_DAYS,
             "db_bytes": st.db.size_bytes(), "last_prune": st.db.kv_get("last_prune")}
 
 
@@ -468,6 +510,7 @@ def settings_view(st: State, request: Request) -> dict:
                      "webhook_secret_set": bool(sec.get("TELEGRAM_WEBHOOK_SECRET")),
                      "last_test": dict(last) if last else None},
         "remote_access": remote_access(sec, request),
+        "watchdog": st.heartbeat.status(),
         "agents": st.agents.list(),
         "agent_state": st.db.kv_get("mac_agent_state", {}),
         "retention": retention_info(st),
@@ -594,6 +637,8 @@ async def collect_loop(st: State):
                 st.engine.self_state = {"rss": me["rss"], "cpu": round(cpu, 2), "db_size": st.db.size_bytes()}
             await asyncio.to_thread(st.engine.tick)
             await st.notifier.process()
+            await asyncio.to_thread(st.automation.tick)          # dry run only; no-op unless something is allow-listed
+            await asyncio.to_thread(st.heartbeat.tick)           # outbound ping to the external watchdog, if configured
         except Exception as e:
             st.db.log("error", f"engine failed: {type(e).__name__}: {e}")
         await asyncio.sleep(max(5, st.settings.get()["refresh_interval"] - (time.time() - started)))
@@ -604,6 +649,7 @@ async def maintenance_loop(st: State):
     while True:
         await asyncio.sleep(3600)
         removed = await asyncio.to_thread(st.db.prune, st.settings.get()["retention_hours"])
+        await asyncio.to_thread(st.db.prune_history)
         if time.time() - last_backup > 86400:
             last_backup = time.time()
             await asyncio.to_thread(backup, st)
@@ -642,3 +688,14 @@ async def telegram_poll_loop(st: State):
                 await _safe_handle(st, u)
         except tg.TelegramError:
             await asyncio.sleep(10)
+
+
+def backfill_events(st: State) -> None:
+    """Incidents created before event history existed get a single 'detected' event so they appear in Activity."""
+    for r in st.db.query("SELECT id,machine,rule,severity,title,active_since,first_seen,state,recovered_at FROM incidents "
+                         "WHERE id NOT IN (SELECT DISTINCT incident_id FROM incident_events)"):
+        st.db.event(r["id"], "detected", "Recorded before event history existed", machine=r["machine"], rule=r["rule"],
+                    severity=r["severity"], title=r["title"], ts=r["active_since"] or r["first_seen"])
+        if r["state"] == "recovered" and r["recovered_at"]:
+            st.db.event(r["id"], "recovered", "Alert cleared", machine=r["machine"], rule=r["rule"], severity=r["severity"],
+                        title=r["title"], ts=r["recovered_at"])

@@ -50,13 +50,15 @@ def seed(st, mac_age: float):
     for i in range(24 * 60, -1, -1):                       # 24 h, one point a minute
         ts = now - i * 60
         wave = math.sin(i / 55.0)
-        sample(db, "hetzner", ts, 14 + 6 * wave + (i % 7), 52 + 4 * wave + (36 if i < 14 else 0), 16 * GB, 0, 4 * GB,
+        sample(db, "hetzner", ts, 14 + 6 * wave + (i % 7), 52 + 4 * wave, 16 * GB, 0, 4 * GB,
                320 * GB, 190 * GB - i * 2_000_000, {"uptime": 19 * 86400, "io_read_mbs": 1.2, "io_write_mbs": 3.4, "io_util": 6,
                                                       "containers": 6, "containers_total": 6})
         if ts < now - mac_age:
-            sample(db, "mac", ts, 22 + 14 * math.sin(i / 20.0) + (i % 5), 64 + 6 * math.sin(i / 70.0), 16 * GB,
-                   (1.1 + 0.2 * wave) * GB, 3 * GB, 494 * GB, 161 * GB,
-                   {"pressure_level": 1, "compressed": 2.4 * GB, "cpu_idle": 71, "cores": 10, "thermal": {"state": "nominal"}})
+            hot = i < 14                                            # last ~14 minutes: the Mac is short of memory
+            sample(db, "mac", ts, 22 + 14 * math.sin(i / 20.0) + (i % 5), (91 if hot else 64 + 6 * math.sin(i / 70.0)), 8 * 1024 ** 3,
+                   (2.1 if hot else 1.1 + 0.2 * wave) * 1024 ** 3, 3 * 1024 ** 3, 494 * GB, 161 * GB,
+                   {"pressure_level": 2 if hot else 1, "compressed": 2.4 * 1024 ** 3, "cpu_idle": 71, "cores": 8,
+                    "thermal": {"state": "nominal"}})
     mac_ts = now - mac_age
     st.hub.last_seen = mac_ts
     st.db.kv_set("mac_agent_state", {"ts": mac_ts, "clean_stop": False, "host": "demo-macbook", "version": "demo", "agent": "agt_demo"})
@@ -71,7 +73,8 @@ def seed(st, mac_age: float):
         "top_mem": [proc(3320, "docker-vm", 9.0, 2400, "Docker VM"), proc(2210, "Code Helper", 18.5, 740),
                     proc(4101, "node", 41.0, 910, "Node.js dev server")],
         "dev": [proc(4101, "node", 41.0, 910, "Node.js dev server")],
-        "groups": {"node": {"count": 6, "rss": 1_900_000_000, "cpu": 47.0, "orphans": 0, "idle": 2},
+        "groups": {"claude": {"count": 3, "rss": 2_576_980_377, "cpu": 12.0, "orphans": 0, "idle": 1},
+                   "node": {"count": 6, "rss": 1_900_000_000, "cpu": 47.0, "orphans": 0, "idle": 2},
                    "docker-vm": {"count": 1, "rss": 2_400_000_000, "cpu": 9.0, "orphans": 0, "idle": 0}},
         "docker_vm_rss": 2_400_000_000, "docker_running": True}, mac_ts)
     snap(db, "mac", "containers", {"list": []}, mac_ts)
@@ -100,6 +103,20 @@ def seed(st, mac_age: float):
     # let the real rule engine turn the last minutes of high memory into a genuine incident
     for k in range(24, -1, -1):
         st.engine.tick(now - k * 30)
+    st.db.execute("UPDATE incidents SET state='recovered', recovered_at=? WHERE rule='cpu' AND machine='hetzner'", (now - 3600,))
+    # one older, already-recovered incident so Activity shows history and the full lifecycle
+    st.db.execute("INSERT INTO incidents(id,rule,machine,subject,severity,state,title,measured,cause,confidence,impact,recommendation,targets,"
+                  "first_seen,active_since,last_seen,recovered_at,notify_state,notified_at,notified_severity,recovery_notified) "
+                  "VALUES('inc_demo_cpu','container_cpu','hetzner','demo','warning','recovered','Container demo-search-indexer is using a lot of CPU',?,"
+                  "'demo-search-indexer is busy','high','Other services slow down.','Inspect it.','[]',?,?,?,?,'sent',?,'warning',1)",
+                  (json.dumps({"summary": {"Container": "demo-search-indexer", "CPU": "112% of one core"}, "facts": ["demo-search-indexer is using 112% of a CPU core"], "values": {}}),
+                   now - 7500, now - 7200, now - 3700, now - 3600, now - 7100))
+    ev = dict(machine="hetzner", rule="container_cpu", severity="warning", title="Container demo-search-indexer is using a lot of CPU")
+    for dt, kind, detail in ((7200, "detected", "Lasted 300s before it counted as a problem"), (7200, "investigated", "demo-search-indexer is busy [high confidence]"),
+                             (7200, "recommended", "Inspect what the workload is doing"), (7100, "notified", "Telegram message sent"),
+                             (3720, "verified", "Measurement stayed back under the limit for 120s"), (3600, "recovered", "Alert cleared"),
+                             (3590, "notified", "Recovery message sent")):
+        st.db.event("inc_demo_cpu", kind, detail, ts=now - dt, **ev)
 
 
 class DemoTailscale:
@@ -123,8 +140,11 @@ def main():
     a = ap.parse_args()
     tmp = Path(tempfile.mkdtemp(prefix="astra-demo-"))
     paths = Paths(str(tmp)); paths.ensure()
-    save_env_file(paths.secrets, {"TAILSCALE_OWNER_LOGIN": DEMO_LOGIN})
+    # Placeholder Telegram values only make Settings show "configured"; the network call is stubbed below.
+    save_env_file(paths.secrets, {"TAILSCALE_OWNER_LOGIN": DEMO_LOGIN, "TELEGRAM_BOT_TOKEN": "0:DEMO-PLACEHOLDER",
+                                  "TELEGRAM_CHAT_ID": "0", "TELEGRAM_USER_ID": "0", "TELEGRAM_MODE": "polling"})
     app = create_app(paths)
+    app.state.st.tg.call = lambda *a, **k: {"ok": True, "result": {}}   # never contacts Telegram
     app.state.st.agents.pair("demo-macbook")                   # the token is discarded; nothing can use it
     app.state.st.engine.service_probe = lambda port: True      # demo has no nginx
     seed(app.state.st, {"connected": 8, "stale": 300, "offline": 3 * 3600}[a.mac])

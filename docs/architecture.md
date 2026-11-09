@@ -6,32 +6,47 @@ This describes what Astra Watch actually does today, not an idealised design.
 
 ```mermaid
 flowchart LR
-    subgraph Mac["MacBook"]
-      AG["Mac agent<br/>Python, launchd"]
-      KC[("macOS Keychain<br/>agent token")]
-      AG --- KC
+    subgraph MAC["MacBook"]
+        AG["Mac agent<br/>Python, launchd<br/>token in Keychain"]
     end
-    subgraph Server["Linux server (Hetzner)"]
-      TS["Tailscale Serve<br/>HTTPS, tailnet only"]
-      APP["Astra Watch backend<br/>FastAPI on 127.0.0.1:8200"]
-      DB[("SQLite<br/>24 h of data")]
-      DK["Docker<br/>(read-only inspection,<br/>docker stop on approval)"]
-      LX["/proc, /sys, cgroups"]
-      APP --- DB
-      APP --- DK
-      APP --- LX
-      TS -- "proxy, adds Tailscale-User-Login" --> APP
-    end
-    ME["Browser: laptop or phone<br/>on your tailnet"]
-    TG["Telegram Bot API"]
 
-    AG -- "HTTPS over Tailscale<br/>bearer token, every 30 s" --> TS
-    ME -- "HTTPS over Tailscale" --> TS
-    APP -- "alert messages" --> TG
-    TG -- "Stop / Confirm taps<br/>(polled by the backend)" --> APP
+    subgraph TAIL["Tailscale private network (tailnet)"]
+        direction TB
+        TS["tailscale serve<br/>HTTPS, adds identity header"]
+    end
+
+    subgraph HZ["Hetzner server"]
+        direction TB
+        subgraph BE["Backend (FastAPI, 127.0.0.1:8200)"]
+            API["Agent API and<br/>dashboard API"]
+            COL["Collector<br/>/proc, /sys, Docker CLI"]
+            ENG["Rule engine<br/>and notifier"]
+        end
+        DB[("SQLite<br/>measurements, incidents, audit")]
+        DK["Docker workloads<br/>(containers)"]
+    end
+
+    BR["Browser<br/>(laptop or phone)"]
+    TG["Telegram"]
+
+    AG -- "1. POST metrics every 30 s<br/>(bearer token)" --> TS
+    BR -- "HTTPS: loads page, polls API" --> TS
+    TS -- "proxy to loopback" --> API
+    COL -- "reads, never changes" --> DK
+    API -- "write samples" --> DB
+    COL -- "write samples" --> DB
+    DB -- "read" --> API
+    ENG -- "evaluate after each collection" --> DB
+    ENG -- "2. alert / recovery message" --> TG
+    TG -- "3. Stop and Confirm taps<br/>(polled by backend)" --> ENG
+    ENG -. "approved stop" .-> DK
 ```
 
-There are three programs: the **Mac agent**, the **backend** (which also collects the server's own metrics and serves the dashboard), and the **React dashboard** (static files served by the backend). SQLite, Tailscale and Telegram are the supporting pieces.
+**Reading the diagram.** The solid arrows into `tailscale serve` are the only paths in from outside the server, and both stay inside the tailnet. The backend listens on loopback, so it cannot be reached any other way. The MacBook *pushes* its measurements to the backend. The backend *pulls* the Hetzner server's own measurements, since it runs on that machine. Telegram is reached by outbound requests only: the backend sends alerts and polls for button taps, so no inbound port is opened. The dotted arrow is the one write action, a confirmed `docker stop`.
+
+There are three programs: the **Mac agent**, the **backend** (which also collects the server's own metrics and serves the dashboard) and the **React dashboard** (static files served by the backend). SQLite, Tailscale and Telegram are the supporting pieces.
+
+Inside the backend (`backend/watcher/`): `main.py` (routes and loops), `collect_linux.py` and `docker_cli.py` (collection), `engine.py` (rules), `explain.py` (plain-English incident text), `views.py` (read-only dashboard models), `notify.py` and `telegram.py` (messages), `automation.py` (policy and dry run), `heartbeat.py` (optional outbound watchdog ping), `security.py` (auth, CSRF), `actions.py` (stop approvals), `db.py` (SQLite and retention) and `ctl.py` (the `watcherctl` admin CLI).
 
 ## 1. MacBook monitoring agent
 
@@ -97,6 +112,31 @@ Nothing is ever stopped automatically. Stopping is two steps: **prepare** (the b
 ## 13. 24-hour retention and cleanup
 
 All time-based data is deleted once it is older than the retention window. The window is 24 hours and cannot be raised above that (settings may only lower it). Cleanup runs at service start and then hourly; a daily database backup is kept for at most 24 hours, config backups for 7 copies.
+
+## A metric's journey
+
+**Mac metric: from the laptop to a graph**
+
+1. The agent samples CPU, memory, swap, disk and top processes on the MacBook.
+2. It sends them with `POST /agent/v1/metrics` over Tailscale, with its bearer token.
+3. `tailscale serve` terminates HTTPS and proxies the call to the backend on loopback.
+4. `agent_auth` hashes the token and compares it with the stored hash, validates the payload and stamps it with the **server's** clock.
+5. The backend inserts a row into `samples` (numbers) and `snapshots` (process list) and records `last_seen`.
+6. The rule engine evaluates the thresholds. Nothing is wrong yet, so no incident exists.
+7. Meanwhile the browser polls `GET /api/overview`. `views.py` reads the latest rows, works out *connection* (how recent `last_seen` is) separately from *health* (what the numbers say), and returns JSON.
+8. The dashboard draws the card and graph. It never asked anything to collect.
+
+**Hetzner metric**: step 1 is the backend's `collect_loop` reading `/proc`, `/sys` and Docker itself every 30 s, and steps 2 to 5 are internal. Steps 6 to 8 are identical.
+
+**From a metric to a notification**
+
+1. Memory on the MacBook crosses 85 %. The engine records a *pending* problem with its start time.
+2. Each collection re-checks it. If it clears, the pending row is deleted and nothing happens.
+3. After 180 s it is still there: an **incident** is created (*active*) and shown in Activity.
+4. `explain.py` builds the explanation (what, why, likely cause, steps) when it is read or sent.
+5. `notify.py` sends one Telegram message, and records delivery on the incident.
+6. When the measurement stays under the limit for 120 s, the incident becomes *recovered* and one recovery message is sent.
+7. If you tap Stop, the backend polls the tap, asks for confirmation (single-use token, 120 s), and only then runs `docker stop` or tells the Mac agent to send SIGTERM. Each step is audited.
 
 ## Data flow
 

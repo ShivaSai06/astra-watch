@@ -10,6 +10,13 @@
     python -m watcher.ctl rotate-agent <id>     # revoke + pair a replacement
     python -m watcher.ctl tailscale-owner <email>   # allow only this tailnet login via `tailscale serve`
     python -m watcher.ctl backup
+    python -m watcher.ctl set-heartbeat <https url>   # external watchdog ping (dead-man's switch); 'off' removes it
+    python -m watcher.ctl automation-show
+    python -m watcher.ctl automation-mode explain|assisted     # 'autonomous' is refused in this version
+    python -m watcher.ctl automation-allow <container>         # eligible for DRY-RUN simulation only
+    python -m watcher.ctl automation-deny <container-or-pattern>
+    python -m watcher.ctl automation-remove <name>             # from allow and deny lists
+    python -m watcher.ctl automation-limit <container> cpu_pct=80 mem_host_pct=40 sustained_seconds=600
 """
 from __future__ import annotations
 
@@ -36,6 +43,7 @@ def cmd_status(paths: Paths, _args):
     tg = Telegram(sec)
     print("Telegram configured :", tg.configured(), "| mode:", s.get("TELEGRAM_MODE", "webhook"))
     print("Webhook secret set  :", bool(s.get("TELEGRAM_WEBHOOK_SECRET")))
+    print("Heartbeat configured:", bool(s.get("HEARTBEAT_URL")))
     print("Tailscale owner set :", bool(s.get("TAILSCALE_OWNER_LOGIN")))
     for a in AgentRegistry(paths).list():
         print(f"Agent {a['id']} ({a['name']}) revoked={a['revoked']}")
@@ -83,7 +91,7 @@ def cmd_setup_telegram(paths: Paths, _args):
     _set(paths, TELEGRAM_USER_ID=str(uid), TELEGRAM_CHAT_ID=str(cid),
          TELEGRAM_WEBHOOK_SECRET=load_env_file(paths.secrets).get("TELEGRAM_WEBHOOK_SECRET") or pysecrets.token_urlsafe(32),
          TELEGRAM_MODE=load_env_file(paths.secrets).get("TELEGRAM_MODE", "polling"))
-    tg.send("<b>PERSONAL INFRASTRUCTURE WATCHER</b>\n\n✅ Telegram connected. You are the only authorised user.")
+    tg.send("<b>ASTRA WATCH</b>\n\n✅ Telegram connected. You are the only authorised user.")
     print("Saved. Mode is 'polling' until you run set-webhook (needs the public HTTPS URL working).")
 
 
@@ -111,7 +119,7 @@ def cmd_tailscale_owner(paths: Paths, args):
 
 
 def cmd_test_telegram(paths: Paths, _args):
-    Telegram(Secrets(paths)).send("<b>PERSONAL INFRASTRUCTURE WATCHER</b>\n\n✅ Test notification from watcherctl.")
+    Telegram(Secrets(paths)).send("<b>ASTRA WATCH</b>\n\n✅ Test notification from watcherctl.")
     print("Sent.")
 
 
@@ -146,7 +154,108 @@ def cmd_backup(paths: Paths, _args):
     print("Backup written to", d)
 
 
-COMMANDS = {"status": cmd_status, "setup-telegram": cmd_setup_telegram, "set-webhook": cmd_set_webhook,
+def cmd_set_heartbeat(paths: Paths, args):
+    from .heartbeat import valid_url
+    if not args:
+        sys.exit("usage: set-heartbeat <https url> | off")
+    if args[0] == "off":
+        _set(paths, HEARTBEAT_URL="")
+        print("Heartbeat disabled.")
+        return
+    if not valid_url(args[0]):
+        sys.exit("The heartbeat URL must start with https://")
+    _set(paths, HEARTBEAT_URL=args[0])
+    print("Heartbeat URL saved (not displayed). Pings start within a minute once the server is reporting.")
+
+
+def _store(paths: Paths):
+    from .automation import PolicyStore
+    return PolicyStore(paths.automation)
+
+
+def _policy(paths: Paths) -> dict:
+    pol, problem = _store(paths).load()
+    if problem:
+        sys.exit(problem + ". Fix the file permissions (chmod 600) or remove it before changing the policy.")
+    return pol
+
+
+def cmd_automation_show(paths: Paths, _args):
+    import json
+    from .automation import effective_mode
+    pol, problem = _store(paths).load()
+    print(json.dumps(pol, indent=2))
+    print("effective mode:", effective_mode(pol)[0], "| autonomous execution available: False")
+    if problem:
+        print("WARNING:", problem)
+
+
+def cmd_automation_mode(paths: Paths, args):
+    pol = _policy(paths)
+    if not args or args[0] not in ("explain", "assisted"):
+        sys.exit("usage: automation-mode explain|assisted   (autonomous execution is not available in this version)")
+    pol["mode"] = args[0]
+    _store(paths).save(pol)
+    print("Mode set to", args[0])
+
+
+def _names(args):
+    if not args:
+        sys.exit("a container name is required")
+    return args[0].lower()
+
+
+def cmd_automation_allow(paths: Paths, args):
+    from .automation import PolicyError
+    pol = _policy(paths)
+    pol["allowlist"] = sorted(set(pol["allowlist"]) | {_names(args)})
+    try:
+        _store(paths).save(pol)
+    except PolicyError as e:
+        sys.exit(str(e))
+    print("Allow-listed for dry-run simulation only:", _names(args))
+
+
+def cmd_automation_deny(paths: Paths, args):
+    pol = _policy(paths)
+    n = _names(args)
+    pol["denylist"] = sorted(set(pol["denylist"]) | {n})
+    pol["allowlist"] = [a for a in pol["allowlist"] if a != n]
+    _store(paths).save(pol)
+    print("Protected:", n)
+
+
+def cmd_automation_remove(paths: Paths, args):
+    pol = _policy(paths)
+    n = _names(args)
+    pol["allowlist"] = [a for a in pol["allowlist"] if a != n]
+    pol["denylist"] = [a for a in pol["denylist"] if a != n]
+    _store(paths).save(pol)
+    print("Removed", n, "(built-in protection, such as immich*, cannot be removed)")
+
+
+def cmd_automation_limit(paths: Paths, args):
+    from .automation import PolicyError
+    pol = _policy(paths)
+    n = _names(args)
+    lim = {}
+    for kv in args[1:]:
+        k, _, v = kv.partition("=")
+        try:
+            lim[k] = float(v)
+        except ValueError:
+            sys.exit(f"bad value in {kv}")
+    pol["services"][n] = {**pol["services"].get(n, {}), **lim}
+    try:
+        _store(paths).save(pol)
+    except PolicyError as e:
+        sys.exit(str(e))
+    print("Limits saved for", n)
+
+
+COMMANDS = {"set-heartbeat": cmd_set_heartbeat, "automation-show": cmd_automation_show, "automation-mode": cmd_automation_mode,
+            "automation-allow": cmd_automation_allow, "automation-deny": cmd_automation_deny,
+            "automation-remove": cmd_automation_remove, "automation-limit": cmd_automation_limit,"status": cmd_status, "setup-telegram": cmd_setup_telegram, "set-webhook": cmd_set_webhook,
             "use-polling": cmd_use_polling, "test-telegram": cmd_test_telegram, "pair-agent": cmd_pair_agent,
             "revoke-agent": cmd_revoke_agent, "rotate-agent": cmd_rotate_agent, "tailscale-owner": cmd_tailscale_owner,
             "backup": cmd_backup}

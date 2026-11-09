@@ -37,10 +37,19 @@ def test_retention_24h_hard_cap_and_cleanup(env):
     add_snap(db, "mac", "procs", {}, now - 40 * 3600)
     db.audit("owner", "stop.execute", "mac", "x", "stopped")
     db.execute("UPDATE audit SET ts=?", (now - 25 * 3600,))
+    db.audit("owner", "stop.execute", "mac", "ancient", "stopped")
+    db.execute("UPDATE audit SET ts=? WHERE target='ancient'", (now - 31 * 86400,))
+    db.event("inc_old", "detected", machine="mac", rule="r", severity="warning", title="t", ts=now - 31 * 86400)
+    db.event("inc_mid", "detected", machine="mac", rule="r", severity="warning", title="t", ts=now - 10 * 86400)
     db.execute("INSERT INTO incidents(id,rule,machine,subject,severity,state,title,first_seen,last_seen,recovered_at) VALUES('old','r','mac','','warning','recovered','t',?,?,?)",
                (now - 50 * 3600, now - 30 * 3600, now - 30 * 3600))
     removed = db.prune(100_000)                                      # a request for 'forever' is capped at 24 h
-    assert removed["samples"] == 1 and removed["snapshots"] == 1 and removed["audit"] == 1 and removed["incidents"] >= 1
+    assert removed["samples"] == 1 and removed["snapshots"] == 1 and removed["incidents"] >= 1
+    assert "audit" not in removed and "incident_events" not in removed          # metric pruning never touches history
+    assert db.one("SELECT COUNT(*) c FROM audit")["c"] == 2 and db.one("SELECT COUNT(*) c FROM incident_events")["c"] == 2
+    h = db.prune_history(100_000)                                    # 'forever' is capped at 30 days
+    assert h == {"incident_events": 1, "audit": 1}
+    assert db.one("SELECT COUNT(*) c FROM audit WHERE target='x'")["c"] == 1 and db.one("SELECT COUNT(*) c FROM incident_events")["c"] == 1
     left = db.one("SELECT COUNT(*) c FROM samples")["c"]
     assert left == 2
     assert db.oldest_record() >= now - 24 * 3600
@@ -106,17 +115,23 @@ def test_persistent_memory_alert_notifies_once_then_recovers(env):
     t = run_ticks(env, t0, 60, 30, mem_pct=40)
     assert env.tg.sent == []
     t = run_ticks(env, t, 600, 30, mem_pct=91)                       # warning for 10 minutes
-    alerts = [m for m in env.tg.sent if "WARNING" in m["text"]]
+    alerts = [m for m in env.tg.sent if "NEEDS ATTENTION" in m["text"]]
     assert len(alerts) == 1                                         # deduplicated: one message for the whole incident
-    assert "HETZNER SERVER" in alerts[0]["text"] and "Open dashboard" in alerts[0]["text"]
-    assert "https://astra.example.ts.net/#/alerts/inc_" in alerts[0]["text"]
-    assert alerts[0]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Review Dashboard"
+    txt = alerts[0]["text"]
+    assert "HETZNER SERVER" in txt and "What happened" in txt and "Why it matters" in txt and "First steps" in txt
+    assert "inferred" in txt                                         # a largest-user is never presented as confirmed
+    assert "https://astra.example.ts.net/#/activity/inc_" in txt
+    assert alerts[0]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Open details"
     t = run_ticks(env, t, 300, 30, mem_pct=30)                       # clears
-    rec = [m for m in env.tg.sent if "RECOVERED" in m["text"]]
+    rec = [m for m in env.tg.sent if "ALERT CLEARED" in m["text"]]
     assert len(rec) == 1
+    assert "Root cause" in rec[0]["text"] and "does not mean" in rec[0]["text"]       # cleared != fixed
+    assert "Memory in use: 91% →" in rec[0]["text"] and "None. Astra Watch did not change anything." in rec[0]["text"]
+    kinds = [r["kind"] for r in env.db.query("SELECT kind FROM incident_events ORDER BY id")]
+    assert kinds[:3] == ["detected", "investigated", "recommended"] and "recovered" in kinds
     assert incidents(env, "recovered") and not incidents(env, "active")
     run_ticks(env, t, 600, 30, mem_pct=30)
-    assert len([m for m in env.tg.sent if "RECOVERED" in m["text"]]) == 1   # recovery sent only once
+    assert len([m for m in env.tg.sent if "ALERT CLEARED" in m["text"]]) == 1   # recovery sent only once
 
 
 def test_escalation_sends_one_more_message(env):
@@ -124,7 +139,7 @@ def test_escalation_sends_one_more_message(env):
     t = run_ticks(env, t0, 400, 30, mem_pct=88)
     assert len(env.tg.sent) == 1
     run_ticks(env, t, 400, 30, mem_pct=97)
-    assert len(env.tg.sent) == 2 and "CRITICAL" in env.tg.sent[1]["text"] and "escalated" in env.tg.sent[1]["text"]
+    assert len(env.tg.sent) == 2 and "CRITICAL" in env.tg.sent[1]["text"] and "got worse" in env.tg.sent[1]["text"]
 
 
 def test_cooldown_suppresses_flapping_repeat(env):

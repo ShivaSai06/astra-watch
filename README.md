@@ -4,97 +4,117 @@
 
 # Astra Watch
 
-**Private infrastructure monitoring for personal devices and servers.**
+**A private monitoring dashboard for a development MacBook and a remote Docker server.**
 
-An open-source personal project: one lightweight dashboard for a MacBook and a Linux server, reachable only over Tailscale.
+One page answers: are my machines healthy, what is using the resources, and has anything stopped reporting?
 
 </div>
 
-![Astra Watch overview (synthetic demo data)](site/assets/screenshots/overview.png)
-<sub>Real dashboard running on synthetic demo data. No live machines appear in any screenshot.</sub>
+![Astra Watch overview showing a MacBook and a Hetzner server side by side](docs/assets/screenshots/01-overview.png)
+<sub>The real dashboard running on synthetic demo data. Machine names, numbers and incidents are fictional, and nothing in this repository comes from a live system.</sub>
 
 ## Why I built it
 
-Managing multiple development machines and self-hosted services often means switching between terminal commands, Docker tools and different monitoring views just to understand what's happening.
+I use a MacBook for development and a rented Hetzner server that runs several Docker workloads. When something felt slow I had to look in a lot of places: CPU and memory, disk and swap, the busiest processes, the state of each container, and whether a machine was even still reporting. For the server that meant connecting to it and running commands each time.
 
-I ran into this with my MacBook and a remote Linux server running several Docker-based workloads. When a machine got slow or a container started using too many resources, I had to check CPU, memory, disk space, running processes and container status separately, and connect to the server by hand to do it.
+I wanted one private page that could answer:
 
-I wanted a simpler way to answer: *Are my machines healthy? What is consuming resources? Which containers need attention? Has a device stopped reporting? Can I check all of this securely while I'm away from my workstation?*
+- Are my machines healthy, and which one is under pressure?
+- What is consuming the resources?
+- Are any containers unhealthy?
+- Has a machine stopped reporting?
+- What happened in the minutes before a problem?
+- Can I check all of this from another device without exposing anything to the internet?
 
-That led me to build Astra Watch: a lightweight application that brings system metrics, process visibility, Docker monitoring and alerts into one private dashboard.
-
-It is a personal project that solves a problem I actually had. It is not an enterprise monitoring platform, but other developers and self-hosters are welcome to explore and extend it.
+Astra Watch is the result. It is a personal project that solves a problem I actually had. It is not an enterprise monitoring product and makes no claims about scale.
 
 ## What it does
 
-- **Two machines, one view.** A Mac (via a small agent) and a Linux server, each marked **Connected**, **Stale** or **Offline** with a last-seen time. Old numbers are never shown as current.
-- **CPU, memory, swap, disk** with 1 h / 24 h trends.
-- **Processes and Docker.** Top processes, per-container CPU, memory, health, restarts and log size.
-- **Alerts with explanations.** A problem must persist before it alerts; incidents show cause, impact and a suggested action.
-- **Telegram notifications**, one per incident, plus a recovery message.
-- **Controlled stop.** A container can be stopped only after an explicit, single-use confirmation.
-- **Private by design.** Tailscale-only access, HTTPS, one authorised identity, Funnel disabled.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    subgraph Mac
-      A[Mac agent<br/>Python, launchd, Keychain]
-    end
-    subgraph Server["Linux server"]
-      T[Tailscale Serve<br/>HTTPS]
-      C[Backend + rule engine<br/>FastAPI]
-      D[(SQLite, 24 h)]
-      K[(Docker)]
-      T --> C
-      C --- D
-      C --- K
-    end
-    B[Browser on your tailnet]
-    G[Telegram]
-    A -- "bearer token" --> T
-    B --> T
-    C -- alerts --> G
-    G -- "Stop / Confirm" --> C
-```
-
-The Mac agent reports every 30 seconds. The server collects its own metrics independently, stores them in SQLite, evaluates alerts and talks to Telegram. The dashboard reads stored data every 30 seconds and never triggers collection. See [docs/architecture.md](docs/architecture.md).
-
-## Technology stack
-
-Python 3.12 · FastAPI · Uvicorn · SQLite · Docker CLI · Tailscale · systemd user services · launchd and macOS Keychain · Telegram Bot API · React 18 · TypeScript · Vite · pytest.
-Each choice and the reason for it: [docs/technology-stack.md](docs/technology-stack.md).
-
-## Security and privacy
-
-- The live dashboard is **private**; it is not published anywhere. Remote access is through Tailscale Serve, **Funnel is disabled**.
-- Network access and application login are separate layers: the backend also requires the one authorised Tailscale identity and CSRF tokens for changes.
-- The Mac agent and Telegram have their own credentials.
-- Stop actions are allowlisted and need a two-step confirmation.
-- No secrets, databases or infrastructure details are in this repository.
-
-Full explanation: [docs/security.md](docs/security.md).
+- **Two machines, shown separately.** A Mac (through a small agent) and a Linux server, each with its own health, connection state and graphs.
+- **Connection is not health.** A machine is *Connected*, *Stale* or *Offline*. A silent machine never shows old numbers as if they were current.
+- **CPU, memory, swap and storage** with 1 hour, 6 hour and 24 hour graphs.
+- **What is using resources.** Top processes, plus per-container CPU, memory, health, restarts and log size.
+- **Incidents with explanations.** A problem has to persist before it becomes an incident. Each one says what happened, how sure the cause is, and what to check.
+- **Telegram notifications** for new incidents and recoveries, with a controlled Stop action.
+- **Visible safety limits.** The Automation page shows what Astra Watch may and may not do.
 
 ## Screenshots
 
+All screenshots are generated by [`scripts/demo_server.py`](scripts/demo_server.py) from synthetic data. [More about how they are made](docs/assets/screenshots/README.md).
+
 | | |
 |---|---|
-| ![Server](site/assets/screenshots/server.png) | ![Stale Mac](site/assets/screenshots/overview-stale.png) |
-| ![Alerts](site/assets/screenshots/alerts.png) | ![Settings](site/assets/screenshots/settings.png) |
+| ![Machine details](docs/assets/screenshots/02-machine-details.png)<br>**Machine details:** current usage, history graphs and the largest resource users | ![Activity](docs/assets/screenshots/03-activity.png)<br>**Activity:** active and recovered incidents, and the actions taken |
+| ![Automation](docs/assets/screenshots/04-automation.png)<br>**Automation:** what is allowed, what needs confirmation, protected services | ![Settings](docs/assets/screenshots/05-settings.png)<br>**Settings:** connections, notifications and thresholds |
+| ![Stale machine](docs/assets/screenshots/06-stale-machine.png)<br>**A silent MacBook** is marked Stale and its values are labelled as not current | |
 
-All generated from synthetic data with [`scripts/demo_server.py`](scripts/demo_server.py).
+## How it works
+
+```mermaid
+flowchart LR
+    MAC["MacBook agent"] -- "metrics every 30 s" --> BE["Backend<br/>collector, rules, API"]
+    HZ["Hetzner server<br/>/proc and Docker"] -- "sampled locally" --> BE
+    BE --> DB[("SQLite<br/>measurements and incidents")]
+    DB --> UI["Dashboard"]
+    BE -- "alerts" --> TG["Telegram"]
+```
+
+1. The **Mac agent** samples the MacBook and sends the numbers to the backend with its own token.
+2. The **backend** samples the Hetzner server itself by reading `/proc` and the Docker CLI. It does not depend on the Mac.
+3. Every sample is stored in **SQLite**. After each collection a rule engine checks the thresholds.
+4. A problem that lasts long enough becomes an **incident** and triggers one Telegram message. When it clears, it is marked recovered.
+5. The **dashboard** only reads what is already stored, so opening it never causes a scan.
+6. Everything is reached over **Tailscale**; nothing is published to the internet.
+
+The full walkthrough, with diagrams, is in [docs/architecture.md](docs/architecture.md).
+
+## Technology stack
+
+Python, FastAPI and SQLite on the backend; React, TypeScript and Vite on the front end; Tailscale for private access; Docker CLI and `/proc` for measurements; launchd and the macOS Keychain on the Mac; the Telegram Bot API for alerts; systemd for the server process; pytest and Vitest for tests. Only what the code actually uses is listed, with reasons, in [docs/technology-stack.md](docs/technology-stack.md).
+
+## Security and privacy
+
+- The dashboard is reachable only through **Tailscale Serve**. Funnel is off and the backend listens on loopback only.
+- The backend additionally accepts one authorised Tailscale identity, and requires a CSRF token for changes.
+- The Mac agent and Telegram have separate credentials. Secrets are never stored in the repository or returned by the API.
+- Stopping a container needs a two-step, single-use confirmation, and protected services can never be stopped.
+- Metrics are kept for 24 hours, incident history for 30 days.
+
+Details and limits: [docs/security.md](docs/security.md).
+
+## What developers can learn from it
+
+The project is small enough to read in an afternoon and touches a lot of real monitoring concerns: a stdlib-only agent, a heartbeat and staleness model, separating *collection* from *dashboard refresh*, persistence before alerting, incident recovery, safe operational actions and private deployment. See [docs/learning-outcomes.md](docs/learning-outcomes.md), which also includes what I learned building it.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) · [Technology stack](docs/technology-stack.md) · [Monitoring and alerting](docs/monitoring.md) · [Security](docs/security.md) · [Setup](docs/SETUP.md)
-- Try it locally on fake data: `python scripts/demo_server.py` (after building `frontend/`).
-- Code map: `backend/` (API, rule engine, tests), `frontend/` (dashboard), `agent/` (Mac agent), `deploy/` (release and rollback scripts), `site/` (public landing page).
+| Document | Covers |
+|---|---|
+| [Architecture](docs/architecture.md) | Components, diagrams, and a metric's journey through the system |
+| [Technology stack](docs/technology-stack.md) | Each technology, what it does here and why |
+| [Monitoring lifecycle](docs/monitoring.md) | Intervals, connectivity, thresholds, incidents, recovery, retention |
+| [Security](docs/security.md) | Access layers, secrets, confirmations, limits |
+| [Learning outcomes](docs/learning-outcomes.md) | What to study here, and what I learned |
+| [Setup](docs/SETUP.md) | Deploying it yourself |
 
-## Project status and limitations
+## Try it locally
 
-Working and in daily personal use. Limitations: exactly two machines (one Mac, one Linux server), a single owner, 24 hours of history, and no alerting if the server itself is down. Read the code before trusting it with your own infrastructure.
+You can run the dashboard on synthetic data without any real machine:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt
+(cd frontend && npm ci && npm run build)
+.venv/bin/python scripts/demo_server.py      # http://127.0.0.1:8300
+```
+
+Tests: `cd backend && ../.venv/bin/pip install -r requirements-dev.txt && ../.venv/bin/python -m pytest tests` and `cd frontend && npm test`.
+
+Code map: `backend/` (API, collection, rule engine, tests), `frontend/` (dashboard), `agent/` (Mac agent), `deploy/` (release and rollback scripts), `scripts/` (demo server), `site/` (static landing page).
+
+## Status and limitations
+
+In daily personal use. It monitors exactly two machines (one Mac, one Linux server) for a single owner and keeps 24 hours of metrics. If the server itself is down it cannot alert on its own; an optional outbound heartbeat to an external service covers that. Read the code before trusting it with your own infrastructure. Issues and pull requests are welcome.
 
 ## License
 
-[MIT](LICENSE) © ShivaSai06
+[MIT](LICENSE)

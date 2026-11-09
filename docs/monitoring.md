@@ -60,6 +60,10 @@ Before this was documented, a single setting (`refresh_interval`) was labelled "
 - A cooldown suppresses a second message for the same problem within 30 minutes.
 - Refreshing or opening the dashboard cannot create incidents or messages: the API only reads. This is covered by the test `test_overview_does_not_collect_or_create_incidents`.
 
+## Healthy is not the same as reporting
+
+Astra Watch tracks two separate questions. **Health** asks whether the numbers it has are good. **Connection** asks whether those numbers are recent. A machine can be perfectly healthy and still *Stale*, for example a sleeping MacBook whose last report looked fine. A machine can also be *Connected* and unhealthy. The dashboard never merges the two: stale values are greyed and labelled "not current" (see the screenshot in the [README](../README.md)), and silence is never presented as "all good".
+
 ## Device status: Connected, Stale, Offline
 
 Every device card shows a connection state, the time it was **last seen** and whether the numbers are current.
@@ -84,3 +88,22 @@ The server keeps monitoring itself whether or not the Mac is present: its collec
 ## 24-hour retention
 
 All history is deleted once older than 24 hours (a hard cap; Settings can only lower it). Cleanup runs at startup and every hour. Example: at 15:00 on Tuesday, the oldest chart point is about 15:00 on Monday. Incidents that recovered more than 24 hours ago are removed too. The database therefore stays small (under a few MB for two machines).
+
+## Incident explanations and history
+
+Each incident is explained in plain English (what happened, why it matters, likely cause, numbered steps, how to verify, whether Astra Watch acted). A cause is labelled **Confirmed** only when something was directly observed, such as Docker reporting an out-of-memory kill. A "largest user" is always **Inferred**. Memory is shown in binary units (an 8 GiB Mac reads "8 GB"); storage stays decimal like Finder.
+
+Every incident records lifecycle events (detected, investigated, recommended, notified, action, verified, recovered). Retention is deliberately separate:
+
+| Data | Kept |
+|---|---|
+| Raw metrics, process and container snapshots | 24 hours (hard cap) |
+| Incident events and the action audit trail | 30 days |
+
+## Automation policy (dry run only)
+
+`watcherctl automation-*` edits an owner-only policy file; the dashboard only displays it. Modes: Explain (recommend only), Assisted (a human confirms every stop, the default), Autonomous (reserved: autonomous execution is a code constant and is **not available**). Containers must be explicitly allow-listed to be considered, the deny list always wins and `immich*` is permanently protected. The dry run records what *would* happen after sustained-limit, host-pressure and cooldown checks; it never stops anything.
+
+## External watchdog
+
+Astra Watch runs on the server it watches, so it cannot report its own death. When `HEARTBEAT_URL` is set (`watcherctl set-heartbeat <https url>`), it sends an outbound ping about once a minute, **only while the latest server sample is fresh and collection is succeeding**. A hosted dead-man's-switch (Healthchecks.io was chosen: free hobbyist tier, built-in Telegram integration, plain HTTP ping) alerts you from outside when pings stop. Nothing is exposed inbound; the URL is a secret kept in `secrets.env`.

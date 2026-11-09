@@ -49,15 +49,44 @@ export function setRefreshSeconds(sec: number) {
   if (ms !== refreshMs) { refreshMs = ms; listeners.forEach(f => f()); }
 }
 export interface AlertRef { id: string; severity: string; title: string }
+export type Level = "good" | "attention" | "critical" | "offline" | "unknown";
+export interface Status { level: Level; label: string; headline: string; watching: number }
+export interface Resource { key: string; label: string; level: "good" | "attention" | "critical" | "unknown"; pct: number; value: string; text: string }
+export interface Attention { id: string; machine: string; severity: string; headline: string; what: string; since: number }
+export interface ActivityItem { id: string; machine: string; rule: string; severity: string; title: string; state: "active" | "recovered" | "ended"; first_ts: number; last_ts: number; events: number }
+export interface Cause { text: string; kind: "confirmed" | "inferred"; confidence: string; evidence: string[]; note: string }
+export interface Explain {
+  headline: string; what: string; why: string; cause: Cause | null; steps: string[]; verify: string[];
+  glossary: { term: string; meaning: string }[]; measurements: string[]; automatic_action: string; duration_seconds: number;
+}
+export interface IncidentEvent { ts: number; kind: string; detail: string }
+export interface ActivityDetail {
+  incident: { id: string; machine: string; rule: string; severity: string; state: string; title: string; first_seen: number; active_since: number;
+    recovered_at: number | null; notify_state?: string; notified_at?: number | null; recovery_notified?: number; targets: { kind: string; ref: any; label: string }[] };
+  explain: Explain; events: IncidentEvent[]; stages: { key: string; done: boolean; skipped: boolean }[];
+}
+export interface Decision { name: string; id: string; protected: boolean; allowlisted: boolean; cpu: number; mem_host_pct: number; over_threshold: boolean; would_stop: boolean; executed: boolean; reasons: string[]; policy: string | null }
+export interface AuditRow { ts: number; actor: string; action: string; machine: string | null; target: string | null; outcome: string | null; detail: string | null }
+export interface AutomationView {
+  mode: "explain" | "assisted" | "autonomous"; requested_mode: string; mode_note: string; problem: string | null; autonomous_available: boolean;
+  dry_run: boolean; allowlist: string[]; denylist: string[]; builtin_protected: string[]; defaults: Record<string, number>;
+  services: Record<string, Record<string, number>>; allowed_actions: string[]; decisions: Decision[]; history: AuditRow[];
+  last_action: AuditRow | null; history_days: number; editable_here: boolean;
+}
 export interface Summary {
   machine: "mac" | "hetzner"; health: Health; connection: "connected" | "stale" | "offline" | "unknown"; last_update: number | null;
   last_seen: number | null; age_seconds: number | null; fresh: boolean;
   cpu: number | null; mem_pct: number | null; mem_total: number | null; mem_used: number | null;
   swap_used: number | null; swap_total: number | null; disk_free: number | null; disk_total: number | null;
-  containers: number | null; alerts: AlertRef[]; agent: { host?: string; version?: string } | null;
+  containers: number | null; unhealthy_containers?: number | null; alerts: AlertRef[]; agent: { host?: string; version?: string } | null;
+  status: Status; resources: Resource[];
 }
-export interface Retention { hours: number; max_hours: number; oldest: number | null; db_bytes: number }
-export interface Overview { mac: Summary; hetzner: Summary; retention: Retention; dashboard_refresh_seconds: number }
+export interface Retention { hours: number; max_hours: number; history_days: number; oldest: number | null; db_bytes: number }
+export interface Overview {
+  mac: Summary; hetzner: Summary; retention: Retention; dashboard_refresh_seconds: number;
+  overall: { level: Level; label: string; text: string; machines?: number; healthy?: number; need_attention?: number; not_reporting?: number; critical_incidents?: number; active_incidents?: number; last_report?: number | null };
+  attention: Attention[]; recent: ActivityItem[];
+}
 
 export interface Proc {
   pid: number; ppid: number; name: string; exe?: string; cpu: number; rss: number; label?: string; eligible?: boolean;

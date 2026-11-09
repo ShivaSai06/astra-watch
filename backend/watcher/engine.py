@@ -30,7 +30,22 @@ LABEL_TEXT = {
 GB = 1e9
 
 
+GIB = 1024 ** 3
+
+
+def mem(b) -> str:
+    """Memory/swap/RSS in binary units, shown as 'GB' like Activity Monitor (8 GiB RAM -> '8 GB')."""
+    v = (b or 0) / GIB
+    return f"{v:.0f} GB" if v >= 1 and abs(v - round(v)) < 0.05 else f"{v:.1f} GB"
+
+
+def _cap(s: str) -> str:
+    """Upper-case the first letter only (str.capitalize() would turn 'Claude Code' into 'Claude code')."""
+    return s[:1].upper() + s[1:]
+
+
 def gb(b) -> str:
+    """Disk / storage sizes in decimal units, like Finder and `df -H`."""
     return f"{(b or 0) / GB:.1f} GB"
 
 
@@ -126,7 +141,7 @@ class Engine:
         cand = [x for x in procs.values() if x.get("eligible") and (label is None or x.get("label") == label)]
         cand.sort(key=lambda x: x.get("rss", 0), reverse=True)
         return [{"kind": "process", "ref": {"pid": x["pid"], "start": x["start"]},
-                 "label": f"{x['name']} {gb(x.get('rss', 0))} (PID {x['pid']})"} for x in cand[:n]]
+                 "label": f"{x['name']} {mem(x.get('rss', 0))} (PID {x['pid']})"} for x in cand[:n]]
 
     def _mac_cause(self, total_mem: int):
         p, groups = self._mac_groups()
@@ -135,15 +150,15 @@ class Engine:
         label, g = groups[0]
         share = g.get("rss", 0) / total_mem if total_mem else 0
         name = LABEL_TEXT.get(label, label)
-        cause = f"{name} ({g.get('count', 0)} process{'es' if g.get('count', 0) != 1 else ''}, {gb(g.get('rss', 0))})"
+        cause = f"{name} ({g.get('count', 0)} process{'es' if g.get('count', 0) != 1 else ''}, {mem(g.get('rss', 0))})"
         if label in ("vitest", "jest") and g.get("count", 0) > 1:
-            cause = f"Several {name} are still running ({g.get('count')} workers, {gb(g.get('rss', 0))})"
+            cause = f"Several {name} are still running ({g.get('count')} workers, {mem(g.get('rss', 0))})"
             if g.get("orphans", 0):
                 cause += f"; {g['orphans']} have no parent process left"
         conf = "high" if share >= 0.30 else "medium" if share >= 0.15 else "low"
         return (cause, conf, self._mac_targets(p, label if label != "docker-vm" else None),
-                {"Main contributor": LABEL_TEXT.get(label, label).replace("the ", "").capitalize()},
-                [f"{LABEL_TEXT.get(lb, lb)}: {gb(gg.get('rss', 0))} in {gg.get('count', 0)} process(es)"
+                {"Main contributor": _cap(LABEL_TEXT.get(label, label).replace("the ", ""))},
+                [f"{LABEL_TEXT.get(lb, lb)}: {mem(gg.get('rss', 0))} in {gg.get('count', 0)} process(es)"
                  for lb, gg in groups[:4]])
 
     def _hz_containers(self):
@@ -161,7 +176,7 @@ class Engine:
         top = rows[0]
         if by == "mem":
             share = top.get("mem", 0) / mem_total if mem_total else 0
-            cause = f"Container {top['name']} is using {gb(top.get('mem', 0))} ({share * 100:.0f}% of RAM)"
+            cause = f"Container {top['name']} is using {mem(top.get('mem', 0))} ({share * 100:.0f}% of RAM)"
             conf = "high" if share >= 0.25 else "medium" if share >= 0.12 else "low"
             if conf == "low":
                 cause = "No single container dominates; memory is spread across many containers"
@@ -169,9 +184,9 @@ class Engine:
             cause = f"Container {top['name']} is using {top.get('cpu', 0):.0f}% of a CPU core"
             conf = "high" if top.get("cpu", 0) >= 60 else "medium" if top.get("cpu", 0) >= 30 else "low"
         targets = [{"kind": "container", "ref": {"id": top["id"]},
-                    "label": f"{top['name']} {gb(top.get('mem', 0)) if by == 'mem' else str(round(top.get('cpu', 0))) + '% CPU'}"}] \
+                    "label": f"{top['name']} {mem(top.get('mem', 0)) if by == 'mem' else str(round(top.get('cpu', 0))) + '% CPU'}"}] \
             if conf != "low" else []
-        facts = [f"{x['name']}: {gb(x.get('mem', 0))}, {x.get('cpu', 0):.0f}% CPU" for x in rows[:4]]
+        facts = [f"{x['name']}: {mem(x.get('mem', 0))}, {x.get('cpu', 0):.0f}% CPU" for x in rows[:4]]
         return cause, conf, targets, {"Main contributor": top["name"]}, facts
 
     # ---------------------------------------------------------------- rules
@@ -195,17 +210,17 @@ class Engine:
             return []
         f = Finding("memory", machine, sev, "High memory consumption detected")
         f.values = {"mem_pct": pct, "swap_used": swap}
-        f.summary = {"Memory used": f"{pct:.0f}%", "Swap used": gb(swap)}
+        f.summary = {"Memory used": f"{pct:.0f}%", "Swap used": mem(swap)}
         if machine == "mac":
             f.summary["Memory pressure"] = {1: "normal", 2: "elevated", 4: "critical"}.get(ex.get("pressure_level", 1), "?")
-            f.facts = [f"Used {gb(s['mem_used'])} of {gb(s['mem_total'])} (apps + system + compressed)",
-                       f"Compressed memory {gb(ex.get('compressed', 0))}; swap {gb(swap)}"]
+            f.facts = [f"Used {mem(s['mem_used'])} of {mem(s['mem_total'])} (apps + system + compressed)",
+                       f"Compressed memory {mem(ex.get('compressed', 0))}; swap {mem(swap)}"]
             cause, conf, targets, summ, more = self._mac_cause(s["mem_total"])
             f.impact = "Your Mac may become slow or unresponsive as it relies on swap."
             f.recommendation = "Inspect and stop unused development workers or containers."
         else:
-            f.facts = [f"Used {gb(s['mem_used'])} of {gb(s['mem_total'])} (cache excluded; {gb(ex.get('mem_avail', 0))} available)",
-                       f"Swap {gb(swap)} of {gb(s['swap_total'])}"]
+            f.facts = [f"Used {mem(s['mem_used'])} of {mem(s['mem_total'])} (cache excluded; {mem(ex.get('mem_avail', 0))} available)",
+                       f"Swap {mem(swap)} of {mem(s['swap_total'])}"]
             cause, conf, targets, summ, more = self._hz_cause(s["mem_total"])
             f.impact = "Containers may be slowed or killed by the kernel (out-of-memory) and new workloads may not start."
             f.recommendation = "Inspect container memory on the Hetzner page and stop what you do not need."
@@ -288,7 +303,7 @@ class Engine:
         total = s["swap_total"] or 0
         if total and 100.0 * s["swap_used"] / total >= t["swap_used_crit"] and total > 0:
             f = Finding("swap_full", machine, "critical", "Swap is almost full")
-            f.summary = {"Swap used": f"{gb(s['swap_used'])} of {gb(total)}"}
+            f.summary = {"Swap used": f"{mem(s['swap_used'])} of {mem(total)}"}
             f.impact = "The system may start killing processes or freeze when swap runs out."
             f.recommendation = "Reduce memory use now: stop unused workloads."
             out.append(f)
@@ -301,8 +316,8 @@ class Engine:
             if growth >= t["swap_growth_mb"] * 1e6 and nondec >= 0.7:
                 f = Finding("swap_growth", machine, "warning", "Swap usage is growing steadily")
                 f.values = {"growth": growth}
-                f.summary = {"Swap growth (30 min)": f"+{growth / 1e6:.0f} MB", "Swap used": gb(vals[-1])}
-                f.facts = [f"Swap rose from {gb(min(vals[: max(1, len(vals) // 3)]))} to {gb(vals[-1])} in about 30 minutes"]
+                f.summary = {"Swap growth (30 min)": f"+{growth / 1e6:.0f} MB", "Swap used": mem(vals[-1])}
+                f.facts = [f"Swap rose from {mem(min(vals[: max(1, len(vals) // 3)]))} to {mem(vals[-1])} in about 30 minutes"]
                 f.cause = "Memory demand is higher than physical RAM and pages keep moving to disk"
                 f.confidence = "medium"
                 f.impact = "Performance degrades progressively; swapping makes everything slower."
@@ -427,13 +442,13 @@ class Engine:
             if share >= t["container_mem_host_pct"] or near_limit:
                 f = Finding("container_mem", "hetzner", "critical" if host_crit else "warning",
                             f"Container {name} is using a lot of memory", subject=x["id"][:12])
-                f.summary = {"Container": name, "Memory": f"{gb(x['mem'])} ({share:.0f}% of RAM)"}
-                f.facts = [f"{name}: {gb(x['mem'])}" + (f" of its {gb(limit)} limit" if limit else "")]
+                f.summary = {"Container": name, "Memory": f"{mem(x['mem'])} ({share:.0f}% of RAM)"}
+                f.facts = [f"{name}: {mem(x['mem'])}" + (f" of its {mem(limit)} limit" if limit else "")]
                 f.cause = "The workload is holding a large share of RAM" if not near_limit else "The container is near its own memory limit"
                 f.confidence = "high"
                 f.impact = "Less memory is available for other workloads; out-of-memory kills become likelier."
                 f.recommendation = "Inspect the workload; stop it if it is not needed."
-                f.targets = [{"kind": "container", "ref": {"id": x["id"]}, "label": f"{name} {gb(x['mem'])}"}]
+                f.targets = [{"kind": "container", "ref": {"id": x["id"]}, "label": f"{name} {mem(x['mem'])}"}]
                 out.append(f)
         # --- logs growing large
         logs = self.snap("hetzner", "logs", max_age=7200)
@@ -490,9 +505,9 @@ class Engine:
                 crit = g.get("rss", 0) > 0.30 * total
                 f = Finding("dev_accumulation", "mac", "critical" if crit else "warning",
                             f"{LABEL_TEXT[lbl]} left running", subject=lbl)
-                f.summary = {"Workers": str(g["count"]), "Memory held": gb(g["rss"]),
-                             "Main contributor": LABEL_TEXT[lbl].capitalize()}
-                f.facts = [f"{g['count']} {lbl} processes, {gb(g['rss'])} total, {g.get('orphans', 0)} orphaned, {g.get('idle', 0)} idle"]
+                f.summary = {"Workers": str(g["count"]), "Memory held": mem(g["rss"]),
+                             "Main contributor": _cap(LABEL_TEXT[lbl])}
+                f.facts = [f"{g['count']} {lbl} processes, {mem(g['rss'])} total, {g.get('orphans', 0)} orphaned, {g.get('idle', 0)} idle"]
                 f.cause = f"Several {lbl.capitalize()} workers are still running after their test run"
                 f.confidence = "high" if g.get("orphans", 0) else "medium"
                 f.impact = "Available RAM is decreasing and macOS leans more on swap."
@@ -502,8 +517,8 @@ class Engine:
         g = groups.get("node")
         if g and g.get("count", 0) >= t["node_procs"] and g.get("rss", 0) > 0.12 * total:
             f = Finding("dev_accumulation", "mac", "warning", "Node.js processes are accumulating", subject="node")
-            f.summary = {"Node processes": str(g["count"]), "Memory held": gb(g["rss"])}
-            f.facts = [f"{g['count']} node processes holding {gb(g['rss'])}; {g.get('idle', 0)} idle"]
+            f.summary = {"Node processes": str(g["count"]), "Memory held": mem(g["rss"])}
+            f.facts = [f"{g['count']} node processes holding {mem(g['rss'])}; {g.get('idle', 0)} idle"]
             f.cause = "Development servers or tools were started and never closed"
             f.confidence = "medium"
             f.impact = "RAM is being consumed by processes you may no longer need."
@@ -515,8 +530,8 @@ class Engine:
             ct = self.snap("mac", "containers", max_age=600)
             running = [c for c in (ct or {}).get("list", []) if c.get("running")]
             f = Finding("docker_vm", "mac", "warning", "Docker is consuming a lot of memory", subject="vm")
-            f.summary = {"Docker VM memory": gb(vm), "Running containers": str(len(running)) if ct else "unknown"}
-            f.facts = [f"Docker Desktop VM resident memory {gb(vm)}"] + [f"container {c['name']}" for c in running[:5]]
+            f.summary = {"Docker VM memory": mem(vm), "Running containers": str(len(running)) if ct else "unknown"}
+            f.facts = [f"Docker Desktop VM resident memory {mem(vm)}"] + [f"container {c['name']}" for c in running[:5]]
             f.cause = "Several containers are running at the same time" if len(running) > 1 else "The Docker VM holds memory it was given"
             f.confidence = "medium"
             f.impact = "Available RAM is decreasing on your 8 GB Mac."
@@ -538,7 +553,7 @@ class Engine:
         if growing:
             x = growing[0]
             f = Finding("mem_growth", "mac", "warning", f"{x['name']} memory keeps growing", subject=x["name"][:30])
-            f.summary = {"Process": x["name"], "Memory now": gb(x["rss"]), "Growth": f"+{x.get('growth', 0) / 1e6:.0f} MB"}
+            f.summary = {"Process": x["name"], "Memory now": mem(x["rss"]), "Growth": f"+{x.get('growth', 0) / 1e6:.0f} MB"}
             f.facts = [f"{x['name']} RSS has risen steadily by {x.get('growth', 0) / 1e6:.0f} MB over the last ~20 minutes"]
             f.cause = "A possible memory leak or an ever-growing cache"
             f.confidence = "low"
@@ -588,6 +603,9 @@ class Engine:
             payload = self._payload(f)
             if key in active:
                 inc = active[key]
+                if RANK.get(f.severity, 0) > RANK.get(inc["severity"], 0):
+                    self.db.event(inc["id"], "escalated", f"Now {f.severity}", machine=f.machine, rule=f.rule,
+                                  severity=f.severity, title=f.title, ts=now)
                 self.db.execute(
                     "UPDATE incidents SET severity=?, title=?, measured=?, cause=?, confidence=?, impact=?, recommendation=?,"
                     " targets=?, last_seen=?, clear_since=NULL WHERE id=?",
@@ -605,6 +623,11 @@ class Engine:
                     "recommendation,targets,first_seen,active_since,last_seen) VALUES(?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?)",
                     (iid, f.rule, f.machine, f.subject, f.severity, f.title, *payload, since, now, now))
                 self.db.execute("DELETE FROM pending WHERE key=?", (key,))
+                ev = dict(machine=f.machine, rule=f.rule, severity=f.severity, title=f.title, ts=now)
+                self.db.event(iid, "detected", f"Lasted {now - since:.0f}s before it counted as a problem", **ev)
+                self.db.event(iid, "investigated", (f.cause or "No clear cause found") +
+                              (f" [{f.confidence} confidence]" if f.confidence else ""), **ev)
+                self.db.event(iid, "recommended", f.recommendation, **ev)
         for key in list(pending):
             if key not in keys:
                 self.db.execute("DELETE FROM pending WHERE key=?", (key,))
@@ -617,6 +640,9 @@ class Engine:
             if now - clear >= s["recover_seconds"]:
                 self.db.execute("UPDATE incidents SET state='recovered', recovered_at=?, last_seen=? WHERE id=?",
                                 (now, now, inc["id"]))
+                ev = dict(machine=inc["machine"], rule=inc["rule"], severity=inc["severity"], title=inc["title"], ts=now)
+                self.db.event(inc["id"], "verified", f"Measurement stayed back under the limit for {s['recover_seconds']:.0f}s", **ev)
+                self.db.event(inc["id"], "recovered", "Alert cleared", **ev)
 
     @staticmethod
     def _payload(f: Finding):

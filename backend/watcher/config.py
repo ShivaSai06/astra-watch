@@ -85,6 +85,7 @@ class Paths:
         self.secrets = self.config / "secrets.env"
         self.agents = self.config / "agents.json"
         self.settings = self.config / "settings.json"
+        self.automation = self.config / "automation.json"
         self.db = self.data / "watcher.sqlite3"
 
     def ensure(self) -> None:
@@ -209,7 +210,7 @@ class Secrets:
     def all(self) -> dict[str, str]:
         env = load_env_file(self.paths.secrets)
         for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_USER_ID", "TELEGRAM_WEBHOOK_SECRET",
-                  "TELEGRAM_MODE", "TAILSCALE_OWNER_LOGIN", "APPROVAL_HMAC_KEY"):
+                  "TELEGRAM_MODE", "TAILSCALE_OWNER_LOGIN", "APPROVAL_HMAC_KEY", "HEARTBEAT_URL"):
             if k in os.environ and k not in env:
                 env[k] = os.environ[k]
         return env

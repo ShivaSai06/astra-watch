@@ -35,6 +35,15 @@ Telegram messages are accepted only from the allow-listed numeric user id **and*
 - Every prepare, confirm, cancel and rejection is written to the audit log.
 - The server user is in the Docker group, which is powerful. Safety relies on the allowlisted code paths above.
 
+## What Astra Watch cannot do
+
+The Automation page in the dashboard shows these limits. They are enforced in code, not only in the interface.
+
+- It cannot restart, kill, delete or remove anything, and it cannot run shell commands, `docker exec`, or touch volumes and images.
+- It cannot act on its own. Autonomous execution is a code constant (`AUTONOMOUS_EXECUTION_AVAILABLE`), not a setting, and is off. The automation policy only runs a dry run that records what *would* happen.
+- It cannot change the policy from the browser; the page is read-only and the policy file is edited on the server with `watcherctl`.
+- Protected services (`immich*` is built in) are never offered for stopping, and the owner's deny list always wins over the allow list.
+
 ## Secret management
 
 | Secret | Where it lives | Never in |
@@ -46,6 +55,13 @@ Telegram messages are accepted only from the allow-listed numeric user id **and*
 | Deploy target and SSH key path | `deploy/local.env` (git-ignored) | repo |
 
 Secrets are entered with hidden prompts via `watcherctl` on the server. The Telegram token is scrubbed from error messages. `test_no_secrets_in_api_responses` checks that no secret appears in API output.
+
+## Data retention and privacy
+
+- Metric samples and process and container snapshots are deleted after 24 hours (a hard cap that settings can only lower).
+- Incident events and the audit trail are kept 30 days, separately from metrics.
+- Process data from the Mac is reduced to a label, executable path and numbers; command-line arguments stay on the laptop.
+- Nothing is sent to any third party except Telegram messages, and, if you enable it, the optional heartbeat ping (which carries no metrics).
 
 ## Public repository precautions
 

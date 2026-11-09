@@ -94,7 +94,11 @@ class Telegram:
 
 # ---------------------------------------------------------------- formatting
 
-E = html.escape
+def E(s) -> str:
+    """Escape for Telegram HTML. Quotes are left alone (they only matter inside attributes, which we never build)."""
+    return html.escape(str(s), quote=False)
+
+
 MACHINE_LABEL = {"mac": "MY MAC", "hetzner": "HETZNER SERVER"}
 SEV_ICON = {"critical": "🔴", "warning": "🟠", "recovered": "🟢"}
 
@@ -103,38 +107,61 @@ def fmt_gb(b: float) -> str:
     return f"{b / 1e9:.1f} GB"
 
 
-def alert_message(inc: dict, base_url: str, escalated: bool = False) -> str:
-    """Concise: title, key numbers, main contributor, impact, action, link."""
-    m = inc.get("measured") or {}
-    lines = ["<b>PERSONAL INFRASTRUCTURE WATCHER</b>", ""]
-    sev = inc["severity"].upper()
-    lines.append(f"{SEV_ICON.get(inc['severity'], '')} <b>{sev} — {MACHINE_LABEL.get(inc['machine'], inc['machine'].upper())}</b>"
-                 + (" (escalated)" if escalated else ""))
-    lines += ["", E(inc["title"]) + ".", ""]
-    for label, val in (m.get("summary") or {}).items():
-        lines.append(f"{E(str(label))}: {E(str(val))}")
-    if inc.get("cause"):
-        conf = inc.get("confidence")
-        lines.append(f"Likely cause: {E(inc['cause'])}" + (f" ({E(conf)} confidence)" if conf else ""))
-    if inc.get("impact"):
-        lines += ["", "<b>Impact:</b>", E(inc["impact"])]
-    if inc.get("recommendation"):
-        lines += ["", "<b>Recommended action:</b>", E(inc["recommendation"])]
-    lines += ["", "<b>Open dashboard:</b>", f"{base_url}/#/alerts/{inc['id']}"]
+SEV_WORD = {"critical": "CRITICAL", "warning": "NEEDS ATTENTION"}
+BRAND = "<b>ASTRA WATCH</b>"
+
+
+def _clip(text: str, n: int) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def _duration(seconds: float) -> str:
+    m = max(1, round(seconds / 60))
+    return f"{m} min" if m < 90 else f"{m / 60:.1f} h"
+
+
+def alert_message(inc: dict, base_url: str, escalated: bool = False, ex: dict | None = None) -> str:
+    """Short and actionable: what happened, why it matters, likely contributor (labelled), first steps, link."""
+    from . import explain as _ex
+    ex = ex or _ex.explain(inc, inc.get("last_seen") or 0)
+    word = SEV_WORD.get(inc["severity"], inc["severity"].upper())
+    machine = MACHINE_LABEL.get(inc["machine"], inc["machine"].upper())
+    lines = [BRAND, "", f"{SEV_ICON.get(inc['severity'], '')} <b>{word} · {machine}</b>" + (" (got worse)" if escalated else ""),
+             f"<b>{E(ex['headline'])}</b>", "",
+             f"<b>What happened</b>\n{E(_clip(ex['what'], 260))}", "",
+             f"<b>Why it matters</b>\n{E(_clip(ex['why'], 200))}"]
+    c = ex["cause"]
+    if c.get("text"):
+        tag = "confirmed" if c["kind"] == "confirmed" else "inferred" + (f", {c['confidence']} confidence" if c.get("confidence") else "")
+        lines += ["", f"<b>Likely cause</b> ({tag})", E(_clip(c["text"], 200))]
+        if c.get("note"):
+            lines.append(f"<i>{E(_clip(c['note'], 120))}</i>")
+    steps = ex["steps"][:3]
+    if steps:
+        lines += ["", "<b>First steps</b>"] + [f"{i}. {E(_clip(t, 150))}" for i, t in enumerate(steps, 1)]
+    lines += ["", f"Full details and every step: {base_url}/#/activity/{inc['id']}"]
     return "\n".join(lines)
 
 
-def recovery_message(inc: dict, base_url: str, duration_s: float) -> str:
-    mins = max(1, round(duration_s / 60))
-    return "\n".join([
-        "<b>PERSONAL INFRASTRUCTURE WATCHER</b>", "",
-        f"🟢 <b>RECOVERED — {MACHINE_LABEL.get(inc['machine'], inc['machine'].upper())}</b>", "",
-        E(inc["title"]) + " has cleared.", f"Lasted about {mins} min.", "",
-        f"{base_url}/#/alerts/{inc['id']}"])
+def recovery_message(inc: dict, base_url: str, duration_s: float, improved: list[str] | None = None,
+                     actions: list[str] | None = None) -> str:
+    """Says the alert cleared. It does NOT claim the root cause is fixed unless an approved action was taken."""
+    from . import explain as _ex
+    machine = MACHINE_LABEL.get(inc["machine"], inc["machine"].upper())
+    ex = _ex.explain(inc, inc.get("recovered_at") or 0)
+    _, root = _ex.root_cause_status(inc, actions)
+    lines = [BRAND, "", f"🟢 <b>ALERT CLEARED · {machine}</b>", f"<b>{E(ex['headline'])}</b>", "This has cleared.", "",
+             f"<b>How long</b>\nIt lasted about {_duration(duration_s)}."]
+    if improved:
+        lines += ["", "<b>What improved</b>"] + [E(x) for x in improved]
+    lines += ["", "<b>Automatic action</b>\n" + E("; ".join(actions) if actions else "None. Astra Watch did not change anything."),
+              "", "<b>Root cause</b>", E(_clip(root, 230)), "", f"Details: {base_url}/#/activity/{inc['id']}"]
+    return "\n".join(lines)
 
 
 def buttons_for(inc: dict, offers: list[dict], base_url: str) -> list[list[dict]]:
-    rows = [[{"text": "Review Dashboard", "url": f"{base_url}/#/alerts/{inc['id']}"}]]
+    rows = [[{"text": "Open details", "url": f"{base_url}/#/activity/{inc['id']}"}]]
     for o in offers[:3]:
         rows.append([{"text": f"Stop: {o['label']}"[:60], "callback_data": f"o:{o['id']}"}])
     return rows
