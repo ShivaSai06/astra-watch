@@ -84,9 +84,9 @@ section { padding: clamp(72px, 10vw, 128px) 0; }
 @keyframes dash { to { stroke-dashoffset: -28; } }
 @keyframes mem { 0%, 30% { transform: scaleX(.52); fill: var(--accent); } 52%, 88% { transform: scaleX(.91); fill: var(--warn); } 100% { transform: scaleX(.52); fill: var(--accent); } }
 @keyframes cpu { 0%, 100% { transform: scaleX(.16); } 50% { transform: scaleX(.24); } }
-@keyframes okchip { 0%, 42% { opacity: 1; } 50%, 92% { opacity: 0; } 100% { opacity: 1; } }
-@keyframes warnchip { 0%, 42% { opacity: 0; } 50%, 92% { opacity: 1; } 100% { opacity: 0; } }
-@keyframes alertin { 0%, 58% { opacity: 0; } 66%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
+@keyframes okchip { 0%, 54% { opacity: 1; } 60%, 90% { opacity: 0; } 98%, 100% { opacity: 1; } }
+@keyframes warnchip { 0%, 54% { opacity: 0; } 60%, 90% { opacity: 1; } 98%, 100% { opacity: 0; } }
+@keyframes alertin { 0%, 64% { opacity: 0; } 70%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
 @keyframes b1 { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(.62); } }
 @keyframes b2 { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(.46); } }
 @keyframes b3 { 0%, 30% { transform: scaleY(.5); fill: var(--accent); } 52%, 88% { transform: scaleY(.92); fill: var(--warn); } 100% { transform: scaleY(.5); fill: var(--accent); } }
