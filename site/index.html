@@ -26,8 +26,8 @@
   <div class="hero">
     <div>
       <div class="eyebrow">Open-source personal project</div>
-      <h1>Private infrastructure monitoring for personal devices and servers.</h1>
-      <p class="lead">One lightweight dashboard for a MacBook and a Linux server: CPU, memory, disk, processes, Docker containers, alerts and Telegram notifications, reachable only over a private Tailscale network.</p>
+      <h1>See what's happening across your computers and servers.</h1>
+      <p class="lead">A single place to see what's happening across your computers and servers, understand problems, and take action when needed. Private, and nothing is stopped without your confirmation.</p>
       <div class="btns">
         <a class="btn primary" href="https://github.com/ShivaSai06/astra-watch">View on GitHub</a>
         <a class="btn" href="#story">Why I built it</a>
@@ -44,18 +44,10 @@
 <section id="story">
   <div class="wrap story">
     <h2>Why I built Astra Watch</h2>
-    <p>Managing multiple development machines and self-hosted services often means switching between terminal commands, Docker tools and different monitoring views just to understand what's happening.</p>
-    <p>I ran into this with my MacBook and a remote Linux server running several Docker-based workloads. When a machine got slow or a container started eating resources, I had to look at CPU, memory, disk space, running processes and container status separately. Checking the server meant connecting to it and running commands by hand.</p>
-    <p>I wanted a simpler way to answer a few questions:</p>
-    <ul class="asks">
-      <li>Are my machines online and healthy?</li>
-      <li>What is using the CPU and memory, and which processes or containers are the heaviest?</li>
-      <li>Are there disk or container problems?</li>
-      <li>Has a device stopped reporting?</li>
-      <li>Can I check all of this securely while I'm away from my computer?</li>
-    </ul>
-    <p>So I built Astra Watch: a small monitoring application that puts system metrics, process visibility, Docker monitoring and alerts into one private dashboard. It watches a local and a remote machine, keeps the last 24 hours of history, and sends Telegram notifications. Remote access goes through a private Tailscale network instead of the public internet.</p>
-    <p>I built it to solve a problem I actually had. It is a personal project, not a product, but other developers and self-hosters are welcome to read it, learn from it and extend it.</p>
+    <p>I develop on a MacBook, and I rent a small server that runs several applications for me.</p>
+    <p>When something got slow, I never knew where to look. Was my laptop out of memory? Which program was using it? Was the server struggling, or was one of its apps misbehaving? Had one of the machines simply stopped reporting? Answering that meant checking different tools, and for the server it meant logging in and typing commands, every time.</p>
+    <p>I wanted one page that could tell me what was going on, warn me when something needed attention, and let me decide what to do about it. So I built it.</p>
+    <p>It is a personal project that solves a problem I actually had. Other developers and self-hosters are welcome to read it, learn from it and extend it.</p>
   </div>
 </section>
 
@@ -69,7 +61,7 @@
       <div class="card"><h3>Disk and swap</h3><p>Free space, how fast it is shrinking, and swap that keeps growing.</p></div>
       <div class="card"><h3>Process visibility</h3><p>Top processes by CPU and memory. On the Mac, development workloads such as Node and test workers are grouped.</p></div>
       <div class="card"><h3>Docker containers</h3><p>Status, health, restarts, CPU, memory, log size and Docker disk usage per container.</p></div>
-      <div class="card"><h3>Alerts and incident history</h3><p>Problems must last a few minutes before they alert, then show cause, impact and a suggested action. Recovered incidents stay for 24 hours.</p></div>
+      <div class="card"><h3>Alerts and incident history</h3><p>Problems must last a few minutes before they alert, then show cause, impact and a suggested action. Recovered incidents are kept for 30 days.</p></div>
       <div class="card"><h3>Telegram notifications</h3><p>One message per incident (no repeat spam), plus a "cleared" message when it recovers.</p></div>
       <div class="card"><h3>Private access with Tailscale</h3><p>Reachable only from my own tailnet, over HTTPS, limited to one identity. Funnel is off.</p></div>
       <div class="card"><h3>Controlled stop actions</h3><p>A runaway container can be stopped only after an explicit confirmation. Nothing is stopped automatically.</p></div>
