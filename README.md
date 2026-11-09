@@ -12,6 +12,11 @@ A private dashboard that brings the health, resource use and alerts for a comput
 
 </div>
 
+![Astra Watch dashboard demo: overview, machine details, a problem explained, a silent machine and the automation limits](docs/assets/astra-watch-demo.gif)
+<sub>The actual Astra Watch interface using sample data. No information from a live machine is included.</sub>
+
+From the dashboard you can see every machine side by side, check what is using its resources, read a plain-language explanation of any problem, notice when a machine goes quiet, and see exactly what Astra Watch is and is not allowed to do.
+
 ## Why it exists
 
 I develop on a MacBook and run my apps on a remote Linux server. When something got slow, I had to open one tool after another and log in to the server to find the cause. Astra Watch puts that information in one private place, tells me when something needs attention, and lets me decide what to do. It never stops anything without my confirmation.
